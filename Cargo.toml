@@ -1,0 +1,25 @@
+[package]
+name = "gitdesk"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+rune = { git = "https://github.com/anomalyco/rune", rev = "9553c9a7d7d1e5e038d14e0b313513e95b4fb8bb", features = ["native-file-dialog"] }
+rune-kit = { git = "https://github.com/anomalyco/rune", rev = "9553c9a7d7d1e5e038d14e0b313513e95b4fb8bb" }
+portable-pty = "0.9"
+shell-words = "1.1"
+vt100 = "0.18"
+
+[patch.crates-io]
+winit = { git = "https://github.com/anomalyco/rune", rev = "9553c9a7d7d1e5e038d14e0b313513e95b4fb8bb" }
+wgpu-hal = { git = "https://github.com/anomalyco/rune", rev = "9553c9a7d7d1e5e038d14e0b313513e95b4fb8bb" }
+sctk-adwaita = { git = "https://github.com/anomalyco/rune", rev = "9553c9a7d7d1e5e038d14e0b313513e95b4fb8bb" }
+parley_engine = { git = "https://github.com/anomalyco/rune", rev = "9553c9a7d7d1e5e038d14e0b313513e95b4fb8bb" }
+accesskit_windows = { git = "https://github.com/anomalyco/rune", rev = "9553c9a7d7d1e5e038d14e0b313513e95b4fb8bb" }
+accesskit_macos = { git = "https://github.com/anomalyco/rune", rev = "9553c9a7d7d1e5e038d14e0b313513e95b4fb8bb" }
+
+[profile.dev]
+debug = 0
+
+[dev-dependencies]
+tempfile = "3"

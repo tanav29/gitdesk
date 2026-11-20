@@ -1,0 +1,351 @@
+use super::*;
+use rune::{Env, Runtime};
+use std::{
+    fs,
+    process::Command,
+    thread,
+    time::{Duration, Instant},
+};
+
+fn fixture_git(dir: &Path, args: &[&str]) -> String {
+    let out = Command::new("git")
+        .current_dir(dir)
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).trim().to_owned()
+}
+
+fn init(dir: &Path) {
+    fs::create_dir_all(dir).unwrap();
+    fixture_git(dir, &["init", "-b", "main"]);
+    for (key, value) in [
+        ("user.name", "Gitdesk Test"),
+        ("user.email", "test@example.invalid"),
+        ("commit.gpgSign", "false"),
+        ("core.hooksPath", ".git/empty-hooks"),
+    ] {
+        fixture_git(dir, &["config", key, value]);
+    }
+}
+
+fn settle(rt: &mut Runtime<Desk>) {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    rt.frame(1.0 / 60.0);
+    while rt.state.busy {
+        assert!(Instant::now() < deadline, "{}", rt.state.workspace.notice);
+        thread::sleep(Duration::from_millis(10));
+        rt.frame(1.0 / 60.0);
+    }
+    for _ in 0..45 {
+        rt.frame(1.0 / 60.0);
+    }
+}
+
+fn click(rt: &mut Runtime<Desk>, key: &str) {
+    let (x, y) = rt
+        .find(key)
+        .unwrap_or_else(|| panic!("Missing control {key}"));
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    settle(rt);
+}
+
+fn enter_path(rt: &mut Runtime<Desk>, path: &Path) {
+    click(rt, "repo-path");
+    rt.paste(path.to_string_lossy());
+    settle(rt);
+    click(rt, "open-path");
+}
+
+#[test]
+fn staging_commit_and_drafts_follow_the_selected_repository() {
+    let tmp = tempfile::tempdir().unwrap();
+    let a = tmp.path().join("first");
+    let b = tmp.path().join("second");
+    for repo in [&a, &b] {
+        init(repo);
+        fs::write(repo.join("-note [1].txt"), "draft").unwrap();
+    }
+    let mut rt = Runtime::new(
+        Desk::new(None),
+        view::view,
+        (1120.0, 740.0),
+        Env {
+            system_dark: false,
+            scale: 1.0,
+        },
+    );
+    rt.poll = Some(|s, _, _| s.poll());
+    settle(&mut rt);
+    enter_path(&mut rt, tmp.path());
+    assert!(rt.state.opening);
+    assert!(rt.state.workspace.selected.is_none());
+    rt.update(|s, _| s.path = TextEdit::new(""));
+    enter_path(&mut rt, &a);
+    click(&mut rt, "commit-message");
+    rt.paste("First draft");
+    settle(&mut rt);
+    assert_eq!(rt.state.draft.text, "First draft");
+    click(&mut rt, "change-repository");
+    enter_path(&mut rt, &b);
+    assert_eq!(rt.state.workspace.selected.as_ref(), Some(&b));
+    assert!(rt.state.draft.text.is_empty());
+    click(&mut rt, "Stage--note [1].txt");
+    assert!(git::snapshot(&b).unwrap().changes[0].staged());
+    click(&mut rt, "Unstage--note [1].txt");
+    assert!(!git::snapshot(&b).unwrap().changes[0].staged());
+    click(&mut rt, "Stage--note [1].txt");
+    click(&mut rt, "commit-message");
+    rt.paste("Commit from Gitdesk");
+    settle(&mut rt);
+    click(&mut rt, "commit");
+    assert_eq!(
+        fixture_git(&b, &["log", "-1", "--format=%s"]),
+        "Commit from Gitdesk"
+    );
+    assert!(rt.state.draft.text.is_empty());
+    click(&mut rt, "tab-History");
+    assert!(rt.state.tab == Tab::History);
+    click(&mut rt, "change-repository");
+    enter_path(&mut rt, &a);
+    assert_eq!(rt.state.draft.text, "First draft");
+    assert!(fixture_git(&a, &["diff", "--cached", "--name-only"]).is_empty());
+    assert!(!git::snapshot(&a).unwrap().has_head);
+}
+
+#[test]
+fn worktrees_bare_repositories_and_remote_actions() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("project");
+    init(&repo);
+    fs::write(repo.join("file"), "one\n").unwrap();
+    Action::Stage("file".into()).apply(&repo).unwrap();
+    Action::Commit("Initial".into()).apply(&repo).unwrap();
+    fs::write(repo.join("file"), "two\n").unwrap();
+    assert!(git::diff(&repo, false).unwrap().contains("+two"));
+    Action::Stage("file".into()).apply(&repo).unwrap();
+    assert!(git::diff(&repo, true).unwrap().contains("+two"));
+    Action::Unstage("file".into(), true).apply(&repo).unwrap();
+    assert!(git::diff(&repo, true).unwrap().is_empty());
+    fixture_git(&repo, &["branch", "topic"]);
+    Action::Switch("topic".into()).apply(&repo).unwrap();
+    fixture_git(&repo, &["worktree", "add", "../linked", "main"]);
+    fixture_git(tmp.path(), &["init", "--bare", "-b", "main", "origin.git"]);
+    let remote = tmp.path().join("origin.git");
+    fixture_git(
+        &repo,
+        &["remote", "add", "origin", remote.to_str().unwrap()],
+    );
+    fixture_git(&repo, &["config", "push.autoSetupRemote", "true"]);
+    for action in [Action::Push, Action::Fetch, Action::Pull] {
+        action.apply(&repo).unwrap();
+    }
+    assert_eq!(
+        fixture_git(&remote, &["rev-parse", "topic"]),
+        fixture_git(&repo, &["rev-parse", "HEAD"])
+    );
+    assert!(git::snapshot(&remote).unwrap().bare);
+    assert_eq!(
+        git::snapshot(&tmp.path().join("linked")).unwrap().branch,
+        "main"
+    );
+    assert_eq!(git::repository_path(&remote).unwrap(), remote);
+    assert_eq!(
+        git::repository_path(&tmp.path().join("linked")).unwrap(),
+        tmp.path().join("linked")
+    );
+}
+
+fn await_terminal(rt: &mut Runtime<Desk>, ready: impl Fn(&Terminal) -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        rt.frame(1.0 / 60.0);
+        if rt.state.shell().is_some_and(&ready) {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "Terminal timed out: {:?}",
+            rt.state.shell().map(|t| t.screen(|s| s.contents()))
+        );
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+#[test]
+fn compares_local_and_remote_branch_tips_without_switching_branches() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init(repo);
+    fs::write(repo.join("sample.txt"), "base\n").unwrap();
+    fixture_git(repo, &["add", "sample.txt"]);
+    fixture_git(repo, &["commit", "-m", "base"]);
+    fixture_git(repo, &["branch", "topic"]);
+    fixture_git(repo, &["switch", "topic"]);
+    fs::write(repo.join("sample.txt"), "topic\n").unwrap();
+    fixture_git(repo, &["commit", "-am", "topic"]);
+    fixture_git(repo, &["update-ref", "refs/remotes/origin/topic", "HEAD"]);
+    fixture_git(
+        repo,
+        &[
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/topic",
+        ],
+    );
+    fixture_git(repo, &["switch", "main"]);
+    fs::write(repo.join("sample.txt"), "working tree change\n").unwrap();
+
+    let mut rt = Runtime::new(
+        Desk::new(Some(repo.to_owned())),
+        view::view,
+        (1120.0, 740.0),
+        Env {
+            system_dark: false,
+            scale: 1.0,
+        },
+    );
+    rt.poll = Some(|s, _, _| s.poll());
+    settle(&mut rt);
+    click(&mut rt, "tab-Diff");
+    assert!(rt.state.patch.contains("+working tree change"));
+    click(&mut rt, "Compare branches");
+    assert_eq!(
+        rt.state.comparison.branches,
+        ["heads/main", "heads/topic", "remotes/origin/topic"]
+    );
+    click(&mut rt, "base-branch-trigger");
+    click(&mut rt, "option0");
+    click(&mut rt, "compare-branch-trigger");
+    click(&mut rt, "option2");
+    click(&mut rt, "run-branch-comparison");
+    assert!(rt.state.patch.contains("-base"));
+    assert!(rt.state.patch.contains("+topic"));
+    assert!(!rt.state.patch.contains("working tree change"));
+    assert_eq!(fixture_git(repo, &["branch", "--show-current"]), "main");
+    assert_eq!(
+        fs::read_to_string(repo.join("sample.txt")).unwrap(),
+        "working tree change\n"
+    );
+}
+
+#[test]
+fn settings_commands_and_interactive_git_use_the_open_repository() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repository with spaces");
+    init(&repo);
+    let mut rt = Runtime::new(
+        Desk::new(Some(repo.clone())),
+        view::view,
+        (1120.0, 740.0),
+        Env {
+            system_dark: false,
+            scale: 1.0,
+        },
+    );
+    rt.poll = Some(|s, _, _| s.poll());
+    settle(&mut rt);
+    click(&mut rt, "tab-Settings");
+    click(&mut rt, "config-key");
+    rt.paste("alias.make-topic");
+    settle(&mut rt);
+    click(&mut rt, "config-value");
+    rt.paste("branch");
+    settle(&mut rt);
+    click(&mut rt, "config-Save");
+    assert_eq!(
+        fixture_git(&repo, &["config", "--local", "alias.make-topic"]),
+        "branch"
+    );
+    assert!(
+        rt.state
+            .config
+            .entries
+            .iter()
+            .any(|(k, v)| k == "alias.make-topic" && v == "branch")
+    );
+
+    fs::write(repo.join("sample.txt"), "one\n").unwrap();
+    Action::Stage("sample.txt".into()).apply(&repo).unwrap();
+    Action::Commit("first".into()).apply(&repo).unwrap();
+    fs::write(repo.join("sample.txt"), "two\n").unwrap();
+    click(&mut rt, "tab-Commands");
+    assert!(rt.state.catalog.iter().any(|n| n == "make-topic"));
+    click(&mut rt, "git-arguments");
+    rt.paste("make-topic feature/cli");
+    settle(&mut rt);
+    click(&mut rt, "run-command");
+    await_terminal(&mut rt, |s| s.ended.is_some());
+    assert_eq!(
+        rt.state.shell().unwrap().ended.as_deref(),
+        Some("Exit code 0")
+    );
+    assert!(
+        git::snapshot(&repo)
+            .unwrap()
+            .branches
+            .contains(&"feature/cli".into())
+    );
+    click(&mut rt, "terminal-finished");
+
+    click(&mut rt, "tab-Terminal");
+    await_terminal(&mut rt, |s| s.screen(|sc| !sc.contents().trim().is_empty()));
+    click(&mut rt, "terminal-screen");
+    for ch in "git -c color.ui=false add -p".chars() {
+        rt.key(rune::KeyEvent {
+            key: rune::Key::Text(ch.to_string()),
+            mods: Default::default(),
+        });
+    }
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Enter,
+        mods: Default::default(),
+    });
+    await_terminal(&mut rt, |s| {
+        s.screen(|sc| sc.contents().contains("Stage this hunk"))
+    });
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Text("y".into()),
+        mods: Default::default(),
+    });
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Enter,
+        mods: Default::default(),
+    });
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while git::diff(&repo, true).unwrap().is_empty() {
+        assert!(
+            Instant::now() < deadline,
+            "interactive staging did not finish"
+        );
+        rt.frame(1.0 / 60.0);
+        thread::sleep(Duration::from_millis(25));
+    }
+    click(&mut rt, "tab-Changes");
+    assert!(rt.state.workspace.snapshot.as_ref().unwrap().changes[0].staged());
+
+    if Command::new("gh")
+        .arg("--version")
+        .output()
+        .is_ok_and(|out| out.status.success())
+    {
+        click(&mut rt, "tab-GitHub CLI");
+        click(&mut rt, "git-arguments");
+        rt.paste("--version");
+        settle(&mut rt);
+        click(&mut rt, "run-command");
+        await_terminal(&mut rt, |s| {
+            s.ended.as_deref() == Some("Exit code 0")
+                && s.screen(|screen| screen.contents().contains("gh version"))
+        });
+        click(&mut rt, "terminal-finished");
+        click(&mut rt, "tab-Commands");
+        assert_eq!(rt.state.command_input().text, "make-topic feature/cli");
+    }
+}
