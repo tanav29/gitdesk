@@ -8,7 +8,8 @@ mod view;
 
 use git::{Action, ConfigEdit, Entries, Scope, Snapshot};
 use rune::{AppSpec, Latest, TextEdit};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use terminal::Terminal;
 
@@ -19,6 +20,7 @@ enum DiffMode {
     WorkingTree,
     Staged,
     Compare,
+    Commit,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -89,8 +91,10 @@ struct Desk {
     tab: Tab,
     draft: TextEdit,
     drafts: HashMap<PathBuf, String>,
+    selected_changes: [HashSet<OsString>; 2],
     patch: String,
     diff_pages: usize,
+    selected_commit: Option<git::Commit>,
     comparison: BranchComparison,
     opening: bool,
     path: TextEdit,
@@ -119,8 +123,10 @@ impl Desk {
             tab: Tab::Changes,
             draft: TextEdit::new(""),
             drafts: HashMap::new(),
+            selected_changes: Default::default(),
             patch: String::new(),
             diff_pages: 1,
+            selected_commit: None,
             comparison: BranchComparison::default(),
             task: Latest::default(),
             busy: false,
@@ -338,16 +344,34 @@ impl Desk {
             && let Some(repo) = self.workspace.selected.clone()
         {
             self.patch.clear();
-            if mode == DiffMode::Compare {
-                self.comparison.compared = false;
-                self.start("Reading branches…", move || {
-                    Update::ComparisonBranches(git::comparison_branches(&repo))
-                });
-            } else {
-                self.start("Reading diff…", move || {
-                    Update::Diff(git::diff(&repo, mode == DiffMode::Staged))
-                });
+            match mode {
+                DiffMode::Compare => {
+                    self.comparison.compared = false;
+                    self.start("Reading branches…", move || {
+                        Update::ComparisonBranches(git::comparison_branches(&repo))
+                    });
+                }
+                DiffMode::Commit => {
+                    if let Some(commit) = &self.selected_commit {
+                        let id = commit.id.clone();
+                        self.start("Reading commit diff…", move || {
+                            Update::Diff(git::commit_diff(&repo, &id))
+                        });
+                    }
+                }
+                DiffMode::WorkingTree | DiffMode::Staged => {
+                    self.start("Reading diff…", move || {
+                        Update::Diff(git::diff(&repo, mode == DiffMode::Staged))
+                    });
+                }
             }
+        }
+    }
+
+    fn select_commit(&mut self, commit: git::Commit) {
+        if !self.busy {
+            self.selected_commit = Some(commit);
+            self.select_tab(Tab::Diff(DiffMode::Commit));
         }
     }
 
@@ -374,6 +398,7 @@ impl Desk {
                 .insert(previous.clone(), self.draft.text.clone());
         }
         self.draft = TextEdit::new(next.and_then(|p| self.drafts.remove(p)).unwrap_or_default());
+        self.selected_changes = Default::default();
         self.tab = Tab::Changes;
     }
 
@@ -400,11 +425,13 @@ impl Desk {
                         notice: String::new(),
                     };
                     self.opening = false;
+                    self.selected_changes = Default::default();
                     self.config = ConfigForm::default();
                     self.github_section = github::Section::default();
                     self.github_entries.clear();
                     self.github_thread = None;
                     self.comparison = BranchComparison::default();
+                    self.selected_commit = None;
                     self.tab = Tab::Changes;
                 }
                 Err(e) => {
@@ -497,6 +524,19 @@ impl Desk {
                 self.workspace.snapshot = snapshot
                     .map_err(|e| self.workspace.notice.push_str(&format!(" {e}")))
                     .ok();
+                if let Some(snapshot) = &self.workspace.snapshot {
+                    let [working, staged] = &self.selected_changes;
+                    let mut remaining = [HashSet::new(), HashSet::new()];
+                    for change in &snapshot.changes {
+                        if change.unstaged() && working.contains(&change.path) {
+                            remaining[0].insert(change.path.clone());
+                        }
+                        if change.staged() && staged.contains(&change.path) {
+                            remaining[1].insert(change.path.clone());
+                        }
+                    }
+                    self.selected_changes = remaining;
+                }
                 if matches!(self.tab, Tab::Diff(_)) {
                     self.tab = Tab::Changes;
                 }

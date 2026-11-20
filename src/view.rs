@@ -2,11 +2,12 @@ use super::{Desk, DiffMode, Tab};
 use crate::git::{Action, Change, ConfigEdit, Scope, Snapshot};
 use rune::{Color, Cx, El, FileDialogOptions, ScrollSpec, TextStyle, col, el, row, text};
 use rune_kit::{
-    Button, ButtonVariant, ControlSize, Kit, Select, SelectAppearance, TextInput, root,
+    Button, ButtonVariant, Checkbox, ControlSize, Kit, Select, SelectAppearance, TextInput, root,
 };
 
 mod diff;
 mod github_thread;
+mod history;
 
 const PAGE: &str = "#171a1e";
 const RAIL: &str = "#121417";
@@ -183,7 +184,9 @@ fn sidebar(s: &Desk, k: &Kit) -> El {
         ("Changes", Tab::Changes),
         (
             "Diff",
-            Tab::Diff(if bare {
+            Tab::Diff(if s.selected_commit.is_some() {
+                DiffMode::Commit
+            } else if bare {
                 DiffMode::Compare
             } else {
                 DiffMode::WorkingTree
@@ -439,21 +442,82 @@ fn change_name(c: &Change, staged: bool) -> &'static str {
 }
 
 fn changes(s: &Desk, data: &Snapshot, k: &Kit) -> El {
-    let mut files = col().gap(8.0);
+    let mut checkbox_kit = k.clone();
+    checkbox_kit.c.border_weak = color("#707d88");
+    checkbox_kit.c.border_hover = color(MUTED);
+    checkbox_kit.c.std_border = color(ACCENT);
+    let mut files = col().gap(12.0);
     for staged in [false, true] {
+        let selection = &s.selected_changes[usize::from(staged)];
         let section: Vec<_> = data
             .changes
             .iter()
             .filter(|c| if staged { c.staged() } else { c.unstaged() })
             .collect();
         let name = if staged { "Staged" } else { "Working tree" };
-        files = files.child(
+        let paths: Vec<_> = section.iter().map(|c| c.path.clone()).collect();
+        let selected: Vec<_> = paths
+            .iter()
+            .filter(|path| selection.contains(*path))
+            .cloned()
+            .collect();
+        let count = selected.len();
+        let all = count > 0 && count == paths.len();
+        let mixed = count > 0 && !all;
+        let action = if staged { "Unstage" } else { "Stage" };
+        let mut group = col().border(1.0, color(RULE)).clip_rounded(6.0).child(
             row()
-                .h(30.0)
+                .h(42.0)
+                .px(10.0)
                 .center_y()
-                .gap(8.0)
-                .child(label(name, 16.0, 600.0, INK))
-                .child(label(section.len().to_string(), 13.0, 500.0, MUTED)),
+                .gap(10.0)
+                .fill(color(HOVER))
+                .child(
+                    Checkbox::new(all)
+                        .label(format!("Select all {} files", name.to_lowercase()))
+                        .hide_label()
+                        .indeterminate(mixed)
+                        .icon(if mixed { k.glyph.dash } else { k.glyph.check })
+                        .disabled(s.busy || paths.is_empty())
+                        .on_toggle(move |s: &mut Desk| {
+                            let selection = &mut s.selected_changes[usize::from(staged)];
+                            selection.clear();
+                            if !all {
+                                selection.extend(paths.iter().cloned());
+                            }
+                        })
+                        .build(&checkbox_kit)
+                        .w(24.0)
+                        .h(32.0)
+                        .key(format!("select-all-{action}")),
+                )
+                .child(label(name, 15.0, 600.0, INK))
+                .child(label(section.len().to_string(), 12.0, 500.0, MUTED))
+                .child(el().grow(1.0))
+                .child(label(
+                    if count == 0 {
+                        String::new()
+                    } else {
+                        format!("{count} selected")
+                    },
+                    12.0,
+                    500.0,
+                    MUTED,
+                ))
+                .child(
+                    command(
+                        k,
+                        &format!("{action} selected"),
+                        if staged {
+                            Action::Unstage(selected, data.has_head)
+                        } else {
+                            Action::Stage(selected)
+                        },
+                        s.busy || count == 0,
+                    )
+                    .w(140.0)
+                    .key(format!("{action}-selected")),
+                ),
         );
         if section.is_empty() {
             let hint = if staged {
@@ -461,16 +525,16 @@ fn changes(s: &Desk, data: &Snapshot, k: &Kit) -> El {
             } else {
                 "Working tree is clean."
             };
-            files = files
-                .child(label(hint, 13.0, 400.0, MUTED))
-                .child(el().h(8.0));
+            group = group
+                .child(divider())
+                .child(col().padding(10.0).child(label(hint, 13.0, 400.0, MUTED)));
         }
         for c in section {
             let kind = change_name(c, staged);
             let action = if staged {
-                Action::Unstage(c.path.clone(), data.has_head)
+                Action::Unstage(vec![c.path.clone()], data.has_head)
             } else {
-                Action::Stage(c.path.clone())
+                Action::Stage(vec![c.path.clone()])
             };
             let ink = if staged {
                 ADDED
@@ -479,30 +543,61 @@ fn changes(s: &Desk, data: &Snapshot, k: &Kit) -> El {
             } else {
                 MUTED
             };
-            files = files.child(
+            let checked = selection.contains(&c.path);
+            let path = c.path.clone();
+            group = group.child(divider()).child(
                 row()
-                    .h(30.0)
+                    .h(36.0)
+                    .px(10.0)
                     .center_y()
-                    .gap(8.0)
-                    .child(label(kind, 12.0, 500.0, ink).w(74.0))
+                    .gap(10.0)
+                    .fill(if checked {
+                        color(SELECTED)
+                    } else {
+                        Color::TRANSPARENT
+                    })
+                    .child(
+                        Checkbox::new(checked)
+                            .label(format!(
+                                "Select {} to {}",
+                                c.path.to_string_lossy(),
+                                action.label().to_lowercase()
+                            ))
+                            .hide_label()
+                            .disabled(s.busy)
+                            .on_toggle(move |s: &mut Desk| {
+                                let selection = &mut s.selected_changes[usize::from(staged)];
+                                if !selection.remove(&path) {
+                                    selection.insert(path.clone());
+                                }
+                            })
+                            .build(&checkbox_kit)
+                            .w(24.0)
+                            .h(32.0)
+                            .key(format!(
+                                "select-{}-{}",
+                                action.label(),
+                                c.path.to_string_lossy()
+                            )),
+                    )
                     .child(
                         label(c.path.to_string_lossy(), 13.0, 400.0, INK)
                             .grow(1.0)
+                            .min_w(0.0)
                             .truncate_middle(),
                     )
+                    .child(label(kind, 12.0, 500.0, ink).w(74.0))
                     .child(
-                        command(k, action.label(), action.clone(), s.busy).key(format!(
-                            "{}-{}",
-                            action.label(),
-                            c.path.to_string_lossy()
-                        )),
+                        command(k, action.label(), action.clone(), s.busy)
+                            .w(84.0)
+                            .key(format!("{}-{}", action.label(), c.path.to_string_lossy())),
                     ),
             );
         }
-        files = files.child(divider());
+        files = files.child(group);
     }
     let input = TextInput::new(&s.draft)
-        .height(28.0)
+        .height(32.0)
         .label("Commit message")
         .placeholder("Describe the staged changes")
         .on_edit(|s: &mut Desk| &mut s.draft)
@@ -519,12 +614,14 @@ fn changes(s: &Desk, data: &Snapshot, k: &Kit) -> El {
         .disabled(!available)
         .on_press(|s: &mut Desk| s.act(Action::Commit(s.draft.text.clone())))
         .build(k)
+        .h(32.0)
         .key("commit");
     col()
         .min_h(0.0)
         .grow(1.0)
         .gap(8.0)
         .child(scroll_list(files))
+        .child(divider())
         .child(row().gap(8.0).center_y().child(input).child(commit))
 }
 
@@ -534,8 +631,11 @@ fn diff_controls(s: &Desk, bare: bool, mode: DiffMode, k: &Kit, layers: &mut Vec
         ("Working tree", DiffMode::WorkingTree),
         ("Staged", DiffMode::Staged),
         ("Compare branches", DiffMode::Compare),
+        ("Commit", DiffMode::Commit),
     ] {
-        if bare && choice != DiffMode::Compare {
+        if choice == DiffMode::Commit && s.selected_commit.is_none()
+            || bare && matches!(choice, DiffMode::WorkingTree | DiffMode::Staged)
+        {
             continue;
         }
         modes = modes.child(
@@ -552,6 +652,29 @@ fn diff_controls(s: &Desk, bare: bool, mode: DiffMode, k: &Kit, layers: &mut Vec
         );
     }
     let controls = col().gap(8.0).child(modes);
+    if mode == DiffMode::Commit
+        && let Some(commit) = &s.selected_commit
+    {
+        return controls.child(
+            row()
+                .center_y()
+                .gap(8.0)
+                .child(label(&commit.short_id, 13.0, 600.0, ACCENT))
+                .child(
+                    label(&commit.title, 14.0, 500.0, INK)
+                        .grow(1.0)
+                        .min_w(0.0)
+                        .truncate(),
+                )
+                .child(
+                    button("Back to History")
+                        .disabled(s.busy)
+                        .on_press(|s: &mut Desk| s.select_tab(Tab::History))
+                        .build(k)
+                        .key("commit-back-to-history"),
+                ),
+        );
+    }
     if mode != DiffMode::Compare {
         return controls;
     }
@@ -640,6 +763,8 @@ fn detail(s: &Desk, data: &Snapshot, k: &Kit, layers: &mut Vec<El>) -> El {
                 "Select a base branch and a compare branch."
             } else if mode == DiffMode::Compare && s.patch.is_empty() {
                 "No differences between the selected branch tips."
+            } else if mode == DiffMode::Commit {
+                "This commit changes no files."
             } else {
                 "No diff for tracked files in this view."
             };
@@ -650,24 +775,7 @@ fn detail(s: &Desk, data: &Snapshot, k: &Kit, layers: &mut Vec<El>) -> El {
                 .child(diff_controls(s, data.bare, mode, k, layers))
                 .child(diff::view(s, k, empty))
         }
-        _ => {
-            if data.history.is_empty() {
-                body = body.child(label("No commits yet.", 14.0, 400.0, MUTED));
-            }
-            for (id, title) in &data.history {
-                body = body
-                    .child(
-                        row()
-                            .h(26.0)
-                            .gap(8.0)
-                            .center_y()
-                            .child(label(id, 13.0, 500.0, ACCENT).w(82.0))
-                            .child(label(title, 14.0, 400.0, INK).grow(1.0).truncate()),
-                    )
-                    .child(divider());
-            }
-            scroll_list(body)
-        }
+        Tab::History | Tab::Changes => history::view(s, &data.history),
     }
 }
 

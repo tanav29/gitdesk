@@ -1,6 +1,7 @@
 use std::ffi::{OsStr, OsString};
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 pub type Result<T> = std::result::Result<T, String>;
 
@@ -33,6 +34,10 @@ fn is_bare_layout(path: &Path) -> bool {
 }
 
 fn git(repo: &Path, args: &[&OsStr]) -> Result<Vec<u8>> {
+    run_git(repo, args, None)
+}
+
+fn run_git(repo: &Path, args: &[&OsStr], input: Option<&[u8]>) -> Result<Vec<u8>> {
     let mut git = Command::new("git");
     #[cfg(windows)]
     {
@@ -50,11 +55,26 @@ fn git(repo: &Path, args: &[&OsStr]) -> Result<Vec<u8>> {
     } else {
         return Err(format!("Repository unavailable at {}", repo.display()));
     }
-    let output = git
-        .arg("--literal-pathspecs")
-        .args(args)
-        .output()
-        .map_err(|e| format!("Could not start Git: {e}"))?;
+    git.arg("--literal-pathspecs").args(args);
+    let (output, written) = if let Some(input) = input {
+        let mut child = git
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("Could not start Git: {e}"))?;
+        let written = child.stdin.take().unwrap().write_all(input);
+        let output = child
+            .wait_with_output()
+            .map_err(|e| format!("Could not read Git result: {e}"))?;
+        (output, written)
+    } else {
+        (
+            git.output()
+                .map_err(|e| format!("Could not start Git: {e}"))?,
+            Ok(()),
+        )
+    };
     if !output.status.success() {
         let message = if output.stderr.is_empty() {
             &output.stdout
@@ -63,6 +83,7 @@ fn git(repo: &Path, args: &[&OsStr]) -> Result<Vec<u8>> {
         };
         return Err(String::from_utf8_lossy(message).trim().to_owned());
     }
+    written.map_err(|e| format!("Could not send file paths to Git: {e}"))?;
     Ok(output.stdout)
 }
 
@@ -112,8 +133,65 @@ pub struct Snapshot {
     pub bare: bool,
     pub has_head: bool,
     pub changes: Vec<Change>,
-    pub history: Vec<(String, String)>,
+    pub history: Vec<HistoryRow>,
     pub branches: Vec<String>,
+}
+
+#[derive(Clone)]
+pub struct Commit {
+    pub id: String,
+    pub short_id: String,
+    pub refs: String,
+    pub title: String,
+}
+
+pub struct HistoryRow {
+    pub graph: String,
+    pub commit: Option<Commit>,
+}
+
+fn history(repo: &Path, has_head: bool) -> Result<Vec<HistoryRow>> {
+    let mut args = vec![
+        "log",
+        "--graph",
+        "--no-color",
+        "--no-show-signature",
+        "--no-notes",
+        "--decorate=short",
+        "--branches",
+        "--remotes",
+        "-40",
+        "--format=%x00%H%x00%h%x00%D%x00%s",
+    ];
+    if has_head {
+        args.push("HEAD");
+    }
+    args.push("--");
+    output(repo, &args)?
+        .lines()
+        .map(|line| {
+            let mut fields = line.splitn(5, '\0');
+            let graph = fields.next().unwrap_or_default().trim_end().to_owned();
+            let commit = match fields.next() {
+                Some(id) => {
+                    let mut field = || {
+                        fields
+                            .next()
+                            .map(str::to_owned)
+                            .ok_or_else(|| "Git returned an incomplete commit record.".to_owned())
+                    };
+                    Some(Commit {
+                        id: id.to_owned(),
+                        short_id: field()?,
+                        refs: field()?,
+                        title: field()?,
+                    })
+                }
+                None => None,
+            };
+            Ok(HistoryRow { graph, commit })
+        })
+        .collect()
 }
 
 pub fn snapshot(repo: &Path) -> Result<Snapshot> {
@@ -145,15 +223,7 @@ pub fn snapshot(repo: &Path) -> Result<Snapshot> {
             });
         }
     }
-    let history = if head.is_some() {
-        output(repo, &["log", "-40", "--format=%h%x09%s"])?
-            .lines()
-            .filter_map(|s| s.split_once('\t'))
-            .map(|(id, title)| (id.into(), title.into()))
-            .collect()
-    } else {
-        Vec::new()
-    };
+    let history = history(repo, head.is_some())?;
     let branches = output(
         repo,
         &[
@@ -177,8 +247,8 @@ pub fn snapshot(repo: &Path) -> Result<Snapshot> {
 
 #[derive(Clone)]
 pub enum Action {
-    Stage(OsString),
-    Unstage(OsString, bool),
+    Stage(Vec<OsString>),
+    Unstage(Vec<OsString>, bool),
     Commit(String),
     Switch(String),
     Fetch,
@@ -199,29 +269,31 @@ impl Action {
         }
     }
     pub fn apply(&self, repo: &Path) -> Result<()> {
-        let args: Vec<&OsStr> = match self {
-            Self::Stage(path) => vec!["add".as_ref(), "--".as_ref(), path],
-            Self::Unstage(path, true) => vec![
-                "reset".as_ref(),
-                "-q".as_ref(),
-                "HEAD".as_ref(),
-                "--".as_ref(),
-                path,
-            ],
-            Self::Unstage(path, false) => vec![
-                "rm".as_ref(),
-                "--cached".as_ref(),
-                "-f".as_ref(),
-                "--".as_ref(),
-                path,
-            ],
-            Self::Commit(message) => vec!["commit".as_ref(), "-m".as_ref(), message.as_ref()],
-            Self::Switch(branch) => vec!["switch".as_ref(), "--".as_ref(), branch.as_ref()],
-            Self::Fetch => vec!["fetch".as_ref()],
-            Self::Pull => vec!["pull".as_ref(), "--ff-only".as_ref()],
-            Self::Push => vec!["push".as_ref()],
+        let (command, paths): (&[&str], &[OsString]) = match self {
+            Self::Stage(paths) => (&["add"], paths),
+            Self::Unstage(paths, true) => (&["reset", "-q", "HEAD"], paths),
+            Self::Unstage(paths, false) => (&["rm", "--cached", "-f"], paths),
+            Self::Commit(message) => return output(repo, &["commit", "-m", message]).map(|_| ()),
+            Self::Switch(branch) => return output(repo, &["switch", "--", branch]).map(|_| ()),
+            Self::Fetch => return output(repo, &["fetch"]).map(|_| ()),
+            Self::Pull => return output(repo, &["pull", "--ff-only"]).map(|_| ()),
+            Self::Push => return output(repo, &["push"]).map(|_| ()),
         };
-        git(repo, &args).map(|_| ())
+        if paths.is_empty() {
+            return Ok(());
+        }
+        let args = command
+            .iter()
+            .copied()
+            .chain(["--pathspec-from-file=-", "--pathspec-file-nul"])
+            .map(OsStr::new)
+            .collect::<Vec<_>>();
+        let mut input = Vec::new();
+        for path in paths {
+            input.extend_from_slice(path.as_encoded_bytes());
+            input.push(0);
+        }
+        run_git(repo, &args, Some(&input)).map(|_| ())
     }
 }
 
@@ -257,8 +329,27 @@ pub fn compare_branches(repo: &Path, base: &str, head: &str) -> Result<String> {
 }
 
 fn diff_output(repo: &Path, extra: &[&str]) -> Result<String> {
+    patch_output(repo, "diff", extra)
+}
+
+pub fn commit_diff(repo: &Path, id: &str) -> Result<String> {
+    patch_output(
+        repo,
+        "show",
+        &[
+            "--format=",
+            "--patch",
+            "--root",
+            "--diff-merges=first-parent",
+            id,
+            "--",
+        ],
+    )
+}
+
+fn patch_output(repo: &Path, command: &str, extra: &[&str]) -> Result<String> {
     let mut args = vec![
-        "diff",
+        command,
         "--no-ext-diff",
         "--no-textconv",
         "--no-color",

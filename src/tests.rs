@@ -64,6 +64,98 @@ fn enter_path(rt: &mut Runtime<Desk>, path: &Path) {
 }
 
 #[test]
+fn history_graph_opens_root_and_merge_patches_in_the_diff_tab() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init(repo);
+    fs::write(repo.join("base.txt"), "root contents\n").unwrap();
+    fixture_git(repo, &["add", "--", "base.txt"]);
+    fixture_git(repo, &["commit", "-m", "Initial commit"]);
+    let root = fixture_git(repo, &["rev-parse", "HEAD"]);
+
+    fixture_git(repo, &["switch", "-c", "topic"]);
+    fs::write(repo.join("topic.txt"), "topic contents\n").unwrap();
+    fixture_git(repo, &["add", "--", "topic.txt"]);
+    fixture_git(repo, &["commit", "-m", "Topic commit"]);
+    fixture_git(repo, &["switch", "main"]);
+    fs::write(repo.join("main.txt"), "main contents\n").unwrap();
+    fixture_git(repo, &["add", "--", "main.txt"]);
+    fixture_git(repo, &["commit", "-m", "Main commit"]);
+    fixture_git(repo, &["merge", "--no-ff", "--no-edit", "topic"]);
+    let merge = fixture_git(repo, &["rev-parse", "HEAD"]);
+    fs::write(repo.join("base.txt"), "uncommitted contents\n").unwrap();
+
+    let mut rt = Runtime::new(
+        Desk::new(Some(repo.to_owned())),
+        view::view,
+        MIN_WINDOW_SIZE,
+        Env {
+            system_dark: false,
+            scale: 1.0,
+        },
+    );
+    rt.poll = Some(|s, _, _| s.poll());
+    settle(&mut rt);
+    click(&mut rt, "tab-History");
+    let history = &rt.state.workspace.snapshot.as_ref().unwrap().history;
+    assert!(
+        history
+            .iter()
+            .any(|row| row.commit.is_none() && row.graph.contains('\\'))
+    );
+    assert_eq!(history.iter().filter(|row| row.commit.is_some()).count(), 4);
+
+    click(&mut rt, &format!("commit-{merge}"));
+    assert!(rt.state.tab == Tab::Diff(DiffMode::Commit));
+    assert!(rt.state.patch.contains("+topic contents"));
+    assert!(!rt.state.patch.contains("main contents"));
+    assert!(!rt.state.patch.contains("uncommitted contents"));
+    click(&mut rt, "commit-back-to-history");
+    click(&mut rt, &format!("commit-{root}"));
+    assert!(rt.state.patch.contains("+root contents"));
+    assert!(!rt.state.patch.contains("topic contents"));
+    assert_eq!(fixture_git(repo, &["rev-parse", "HEAD"]), merge);
+}
+
+#[test]
+fn stages_and_unstages_only_selected_files_before_the_first_commit() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init(repo);
+    for file in ["- first.txt", "second [2].txt", "untouched.txt"] {
+        fs::write(repo.join(file), file).unwrap();
+    }
+    let mut rt = Runtime::new(
+        Desk::new(Some(repo.to_owned())),
+        view::view,
+        MIN_WINDOW_SIZE,
+        Env {
+            system_dark: false,
+            scale: 1.0,
+        },
+    );
+    rt.poll = Some(|s, _, _| s.poll());
+    settle(&mut rt);
+    click(&mut rt, "select-Stage-- first.txt");
+    click(&mut rt, "select-Stage-second [2].txt");
+    click(&mut rt, "Stage-selected");
+    assert_eq!(
+        fixture_git(repo, &["diff", "--cached", "--name-only"]),
+        "- first.txt\nsecond [2].txt"
+    );
+    assert!(rt.state.selected_changes[0].is_empty());
+
+    click(&mut rt, "select-all-Unstage");
+    click(&mut rt, "Unstage-selected");
+    assert!(fixture_git(repo, &["diff", "--cached", "--name-only"]).is_empty());
+    assert!(rt.state.selected_changes[1].is_empty());
+    assert_eq!(
+        fs::read_to_string(repo.join("- first.txt")).unwrap(),
+        "- first.txt"
+    );
+}
+
+#[test]
 fn staging_commit_and_drafts_follow_the_selected_repository() {
     let tmp = tempfile::tempdir().unwrap();
     let a = tmp.path().join("first");
@@ -125,13 +217,15 @@ fn worktrees_bare_repositories_and_remote_actions() {
     let repo = tmp.path().join("project");
     init(&repo);
     fs::write(repo.join("file"), "one\n").unwrap();
-    Action::Stage("file".into()).apply(&repo).unwrap();
+    Action::Stage(vec!["file".into()]).apply(&repo).unwrap();
     Action::Commit("Initial".into()).apply(&repo).unwrap();
     fs::write(repo.join("file"), "two\n").unwrap();
     assert!(git::diff(&repo, false).unwrap().contains("+two"));
-    Action::Stage("file".into()).apply(&repo).unwrap();
+    Action::Stage(vec!["file".into()]).apply(&repo).unwrap();
     assert!(git::diff(&repo, true).unwrap().contains("+two"));
-    Action::Unstage("file".into(), true).apply(&repo).unwrap();
+    Action::Unstage(vec!["file".into()], true)
+        .apply(&repo)
+        .unwrap();
     assert!(git::diff(&repo, true).unwrap().is_empty());
     fixture_git(&repo, &["branch", "topic"]);
     Action::Switch("topic".into()).apply(&repo).unwrap();
@@ -272,7 +366,9 @@ fn settings_and_interactive_git_use_the_open_repository() {
     );
 
     fs::write(repo.join("sample.txt"), "one\n").unwrap();
-    Action::Stage("sample.txt".into()).apply(&repo).unwrap();
+    Action::Stage(vec!["sample.txt".into()])
+        .apply(&repo)
+        .unwrap();
     Action::Commit("first".into()).apply(&repo).unwrap();
     fs::write(repo.join("sample.txt"), "two\n").unwrap();
     click(&mut rt, "tab-Terminal");
