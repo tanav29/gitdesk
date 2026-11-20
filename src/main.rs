@@ -105,6 +105,7 @@ enum Update {
         outcome: git::Result<String>,
         committed: bool,
         stashed: bool,
+        branch_created: bool,
     },
     Diff(git::Result<String>),
     ComparisonBranches(git::Result<Vec<String>>),
@@ -124,6 +125,7 @@ struct Desk {
     comparison: BranchComparison,
     opening: bool,
     path: TextEdit,
+    branch_name: TextEdit,
     config: ConfigForm,
     stash: StashForm,
     github_section: github::Section,
@@ -141,6 +143,7 @@ impl Desk {
             workspace: Workspace::default(),
             opening: true,
             path: TextEdit::new(""),
+            branch_name: TextEdit::new(""),
             config: ConfigForm::default(),
             stash: StashForm::default(),
             github_section: github::Section::default(),
@@ -335,6 +338,8 @@ impl Desk {
             );
             let committed = matches!(action, Some(Action::Commit(..))) && outcome.is_ok();
             let stashed = matches!(action, Some(Action::Stash(..))) && outcome.is_ok();
+            let branch_created =
+                matches!(action, Some(Action::CreateBranch(..))) && outcome.is_ok();
             let snapshot = git::snapshot(&path);
             Update::Repository {
                 path,
@@ -342,6 +347,7 @@ impl Desk {
                 outcome,
                 committed,
                 stashed,
+                branch_created,
             }
         });
     }
@@ -349,6 +355,13 @@ impl Desk {
     fn act(&mut self, action: Action) {
         if let Some(repo) = self.workspace.selected.clone() {
             self.load_repo(repo, Some(action));
+        }
+    }
+
+    fn create_branch(&mut self) {
+        let name = self.branch_name.text.trim().to_owned();
+        if !name.is_empty() {
+            self.act(Action::CreateBranch(name));
         }
     }
 
@@ -542,6 +555,7 @@ impl Desk {
                     self.commit_options = CommitOptions::default();
                     self.config = ConfigForm::default();
                     self.stash = StashForm::default();
+                    self.branch_name = TextEdit::new("");
                     self.github_section = github::Section::default();
                     self.github_entries.clear();
                     self.github_thread = None;
@@ -630,6 +644,7 @@ impl Desk {
                 outcome,
                 committed,
                 stashed,
+                branch_created,
             } => {
                 self.swap_draft(Some(&path));
                 self.workspace.selected = Some(path);
@@ -639,6 +654,9 @@ impl Desk {
                 }
                 if stashed {
                     self.stash.message = TextEdit::new("");
+                }
+                if branch_created {
+                    self.branch_name = TextEdit::new("");
                 }
                 self.workspace.notice = outcome.unwrap_or_else(|e| e);
                 self.workspace.snapshot = snapshot

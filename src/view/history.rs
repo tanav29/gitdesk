@@ -14,15 +14,28 @@ pub(super) fn view(s: &Desk, history: &[HistoryRow]) -> El {
     let graph_width = (columns as f32 * 8.0).clamp(24.0, 240.0);
     let mut list = col();
     for line in history {
-        let graph = text(&line.graph)
-            .font(TextStyle::new(13.0, 500.0).family(Family::SystemMono))
+        let strokes: String = line
+            .graph
+            .chars()
+            .map(|c| match c {
+                '*' => '●',
+                '|' => '│',
+                '/' => '╱',
+                '\\' => '╲',
+                '-' => '─',
+                '_' => '─',
+                other => other,
+            })
+            .collect();
+        let graph = text(strokes)
+            .font(TextStyle::new(15.0, 500.0).family(Family::SystemMono))
             .color(color(if line.commit.is_some() { ACCENT } else { MUTED }))
             .w(graph_width)
             .truncate()
             .a11y_hidden();
         let item = row().px(8.0).gap(10.0).center_y().child(graph);
         let Some(commit) = &line.commit else {
-            list = list.child(item.h(18.0));
+            list = list.child(item.h(20.0));
             continue;
         };
         let selected = s
@@ -30,7 +43,7 @@ pub(super) fn view(s: &Desk, history: &[HistoryRow]) -> El {
             .as_ref()
             .is_some_and(|selected| selected.id == commit.id);
         let mut item = item
-            .h(26.0)
+            .h(30.0)
             .radius(4.0)
             .role("button")
             .label(format!("{} {}", commit.short_id, commit.title))

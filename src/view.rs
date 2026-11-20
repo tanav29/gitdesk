@@ -23,7 +23,7 @@ const ADDED: &str = "#8cd4a5";
 const REMOVED: &str = "#f2a5a3";
 
 pub(crate) fn button(title: impl Into<String>) -> Button {
-    Button::new(title).control_size(ControlSize::Small)
+    Button::new(title).control_size(ControlSize::Regular)
 }
 
 fn color(hex: &str) -> Color {
@@ -136,7 +136,7 @@ fn sidebar(s: &Desk, k: &Kit) -> El {
         s.tab
     };
     let mut rail = col()
-        .w(120.0)
+        .w(148.0)
         .h_full()
         .padding(8.0)
         .gap(2.0)
@@ -151,7 +151,7 @@ fn sidebar(s: &Desk, k: &Kit) -> El {
         let active = tab == current || matches!((tab, current), (Tab::Diff(_), Tab::Diff(_)));
         let mut item = row()
             .key(format!("tab-{title}"))
-            .h(26.0)
+            .h(36.0)
             .px(6.0)
             .gap(7.0)
             .center_y()
@@ -175,7 +175,7 @@ fn sidebar(s: &Desk, k: &Kit) -> El {
             }))
             .child(label(
                 title,
-                13.0,
+                15.0,
                 if active { 600.0 } else { 400.0 },
                 if active { INK } else { MUTED },
             ));
@@ -773,16 +773,62 @@ fn detail(s: &Desk, data: &Snapshot, k: &Kit, layers: &mut Vec<El>) -> El {
         Tab::Stashes => stashes::view(s, data, k),
         Tab::Changes if !data.bare => changes(s, data, k, layers),
         Tab::Branches => {
+            if data.has_head {
+                body = body
+                    .child(
+                        row()
+                            .gap(8.0)
+                            .center_y()
+                            .child(
+                                TextInput::new(&s.branch_name)
+                                    .height(36.0)
+                                    .label("New branch name")
+                                    .placeholder("New branch name")
+                                    .on_edit(|s: &mut Desk| &mut s.branch_name)
+                                    .on_submit(|s: &mut Desk, _| s.create_branch())
+                                    .disabled(s.busy)
+                                    .build(k)
+                                    .grow(1.0)
+                                    .key("new-branch-name"),
+                            )
+                            .child(
+                                button("Create branch")
+                                    .disabled(s.busy || s.branch_name.text.trim().is_empty())
+                                    .on_press(Desk::create_branch)
+                                    .build(k)
+                                    .key("create-branch"),
+                            ),
+                    )
+                    .child(label(
+                        "Merge or rebase the current branch using a branch below.",
+                        13.0,
+                        400.0,
+                        MUTED,
+                    ));
+            }
             for branch in &data.branches {
                 let current = branch == &data.branch;
                 let mut line = row()
-                    .h(30.0)
+                    .h(42.0)
+                    .gap(8.0)
                     .center_y()
                     .child(label(branch, 14.0, 500.0, INK).grow(1.0).truncate());
                 if current {
                     line = line.child(label("Current", 12.0, 500.0, ACCENT));
                 } else if !data.bare {
                     line = line.child(command(k, "Switch", Action::Switch(branch.clone()), s.busy));
+                    line = line.child(command(
+                        k,
+                        "Merge into current",
+                        Action::Merge(branch.clone()),
+                        s.busy,
+                    ));
+                    line = line.child(command(
+                        k,
+                        "Rebase current onto",
+                        Action::Rebase(branch.clone()),
+                        s.busy,
+                    ));
                 }
                 body = body.child(line).child(divider());
             }
@@ -832,9 +878,8 @@ pub fn view(s: &Desk, _: &mut Cx<Desk>) -> El {
     let title = w
         .selected
         .as_ref()
-        .and_then(|p| p.file_name())
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "Workspace".into());
+        .map(|p| p.display().to_string())
+        .unwrap_or_default();
     let refresh = button("Refresh")
         .disabled(s.busy)
         .on_press(Desk::refresh)
@@ -855,30 +900,20 @@ pub fn view(s: &Desk, _: &mut Cx<Desk>) -> El {
         }
         toolbar = toolbar.child(command(&k, "Push", Action::Push, s.busy));
     }
-    let mut header = col().gap(4.0).child(toolbar.child(refresh));
-    if let Some(path) = &w.selected {
-        let mut metadata = row().center_y().gap(8.0).child(
-            label(path.display().to_string(), 12.0, 400.0, MUTED)
-                .grow(1.0)
-                .min_w(0.0)
-                .truncate_head(),
+    if let Some(data) = &w.snapshot {
+        toolbar = toolbar.child(
+            label(&data.branch, 13.0, 500.0, ACCENT)
+                .max_w(140.0)
+                .truncate(),
         );
-        if let Some(data) = &w.snapshot {
-            let branch = if data.bare {
-                format!("Bare · {}", data.branch)
-            } else {
-                data.branch.clone()
-            };
-            metadata = metadata.child(label(branch, 12.0, 500.0, ACCENT).max_w(180.0).truncate());
-        }
-        header = header.child(metadata);
     }
+    let header = col().child(toolbar.child(refresh));
     let mut main = col()
         .grow(1.0)
         .min_w(0.0)
         .h_full()
-        .padding(8.0)
-        .gap(6.0)
+        .padding(12.0)
+        .gap(10.0)
         .child(header)
         .child(divider());
     if let Some(data) = &w.snapshot {

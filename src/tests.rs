@@ -34,6 +34,46 @@ fn init(dir: &Path) {
     }
 }
 
+#[test]
+fn branch_actions_create_merge_and_rebase_current_branch() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init(repo);
+    fs::write(repo.join("base"), "base").unwrap();
+    fixture_git(repo, &["add", "."]);
+    fixture_git(repo, &["commit", "-m", "base"]);
+    git::Action::CreateBranch("topic".into())
+        .apply(repo)
+        .unwrap();
+    assert!(
+        git::Action::CreateBranch("-invalid".into())
+            .apply(repo)
+            .is_err()
+    );
+    fixture_git(repo, &["switch", "topic"]);
+    fs::write(repo.join("topic"), "topic").unwrap();
+    fixture_git(repo, &["add", "."]);
+    fixture_git(repo, &["commit", "-m", "topic"]);
+    fixture_git(repo, &["switch", "main"]);
+    git::Action::Merge("topic".into()).apply(repo).unwrap();
+    assert!(repo.join("topic").exists());
+    git::Action::CreateBranch("feature".into())
+        .apply(repo)
+        .unwrap();
+    fs::write(repo.join("main"), "main").unwrap();
+    fixture_git(repo, &["add", "."]);
+    fixture_git(repo, &["commit", "-m", "main"]);
+    fixture_git(repo, &["switch", "feature"]);
+    fs::write(repo.join("feature"), "feature").unwrap();
+    fixture_git(repo, &["add", "."]);
+    fixture_git(repo, &["commit", "-m", "feature"]);
+    git::Action::Rebase("main".into()).apply(repo).unwrap();
+    assert_eq!(
+        fixture_git(repo, &["rev-parse", "HEAD^"]),
+        fixture_git(repo, &["rev-parse", "main"])
+    );
+}
+
 fn settle(rt: &mut Runtime<Desk>) {
     let deadline = Instant::now() + Duration::from_secs(20);
     rt.frame(1.0 / 60.0);

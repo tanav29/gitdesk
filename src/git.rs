@@ -311,6 +311,9 @@ pub enum Action {
         restore_index: bool,
     },
     Switch(String),
+    CreateBranch(String),
+    Merge(String),
+    Rebase(String),
     Fetch,
     Pull,
     Push,
@@ -327,6 +330,9 @@ impl Action {
             Self::RestoreStash { pop: true, .. } => "Pop stash",
             Self::RestoreStash { pop: false, .. } => "Apply stash",
             Self::Switch(_) => "Switch branch",
+            Self::CreateBranch(_) => "Create branch",
+            Self::Merge(_) => "Merge branch",
+            Self::Rebase(_) => "Rebase branch",
             Self::Fetch => "Fetch",
             Self::Pull => "Pull",
             Self::Push => "Push",
@@ -408,6 +414,21 @@ impl Action {
                 .map(|_| ());
             }
             Self::Switch(branch) => return output(repo, &["switch", "--", branch]).map(|_| ()),
+            Self::CreateBranch(branch) => {
+                output(repo, &["check-ref-format", "--branch", branch])?;
+                return output(repo, &["branch", "--", branch]).map(|_| ());
+            }
+            Self::Merge(branch) => {
+                return output(
+                    repo,
+                    &["merge", "--no-edit", "--", &format!("refs/heads/{branch}")],
+                )
+                .map(|_| ());
+            }
+            Self::Rebase(branch) => {
+                return output(repo, &["rebase", "--", &format!("refs/heads/{branch}")])
+                    .map(|_| ());
+            }
             Self::Fetch => return output(repo, &["fetch"]).map(|_| ()),
             Self::Pull => return output(repo, &["pull", "--ff-only"]).map(|_| ()),
             Self::Push => return output(repo, &["push"]).map(|_| ()),

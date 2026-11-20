@@ -41,7 +41,7 @@ The **More** menu beside the commit button lets you add a signed-off-by trailer,
 
 In **Stashes**, save staged and unstaged changes with an optional message. Check **Include untracked files** to save new files too. **Apply** restores the changes and keeps the stash. **Pop** removes the stash after a successful restore. **Restore staged state** is on by default.
 
-**Diff** shows tracked changes in the working tree or index. **History** graphs up to 40 commits reachable from local branches, remote-tracking branches, and the current HEAD. Select a commit to open its patch in **Diff**. Merge commits are compared with their first parent. **Branches** lists local branches and lets you switch between them.
+**Diff** shows tracked changes in the working tree or index. **History** graphs up to 40 commits reachable from local branches, remote-tracking branches, and the current HEAD. Select a commit to open its patch in **Diff**. Merge commits are compared with their first parent. **Branches** lets you create and switch local branches, merge a branch into the current branch, or rebase the current branch onto another. Git reports conflicts in the window; use the terminal to resolve them and continue or abort the operation.
 
 In **Diff → Compare branches**, choose a base and a comparison branch to view the changes from the base tip to the comparison tip. The pickers include local and remote-tracking branches. Use **Fetch** to update remote-tracking branches.
 
