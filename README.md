@@ -10,6 +10,17 @@ cargo run --locked
 
 Pass a repository path to open it at launch, for example `cargo run --locked -- "C:\Projects\my repo"`. **Open…** switches to another repository or linked worktree.
 
+## Release
+
+Push a version tag from a commit containing the release workflow.
+
+```powershell
+git tag -a v0.1.0 -m "Release v0.1.0"
+git push origin v0.1.0
+```
+
+GitHub Actions tests and builds Windows x64, macOS Apple Silicon, and Linux x64 binaries. Once all three builds pass, it publishes the archives and `SHA256SUMS` to GitHub Releases. Tags like `v0.2.0-rc.1` publish as prereleases.
+
 ## Keyboard shortcuts
 
 Use Ctrl on Windows and Linux, or Command on macOS.
