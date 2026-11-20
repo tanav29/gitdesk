@@ -9,6 +9,7 @@ use rune_kit::{
 mod diff;
 mod github_thread;
 mod history;
+mod stashes;
 
 const PAGE: &str = "#171a1e";
 const RAIL: &str = "#121417";
@@ -195,11 +196,12 @@ fn sidebar(s: &Desk, k: &Kit) -> El {
         ),
         ("History", Tab::History),
         ("Branches", Tab::Branches),
+        ("Stashes", Tab::Stashes),
         ("Settings", Tab::Settings),
         ("GitHub", Tab::GitHub),
         ("Terminal", Tab::Terminal),
     ] {
-        if bare && tab == Tab::Changes {
+        if bare && matches!(tab, Tab::Changes | Tab::Stashes) {
             continue;
         }
         if tab == Tab::Settings {
@@ -827,6 +829,7 @@ fn detail(s: &Desk, data: &Snapshot, k: &Kit, layers: &mut Vec<El>) -> El {
         Tab::Settings => settings(s, k),
         Tab::GitHub => github(s, k),
         Tab::Terminal => crate::terminal_view::view(s, k),
+        Tab::Stashes => stashes::view(s, data, k),
         Tab::Changes if !data.bare => changes(s, data, k, layers),
         Tab::Branches => {
             for branch in &data.branches {

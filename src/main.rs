@@ -29,6 +29,7 @@ enum Tab {
     Diff(DiffMode),
     History,
     Branches,
+    Stashes,
     Settings,
     GitHub,
     Terminal,
@@ -47,6 +48,22 @@ struct ConfigForm {
     entries: Entries,
     key: TextEdit,
     value: TextEdit,
+}
+
+struct StashForm {
+    message: TextEdit,
+    include_untracked: bool,
+    restore_index: bool,
+}
+
+impl Default for StashForm {
+    fn default() -> Self {
+        Self {
+            message: TextEdit::new(""),
+            include_untracked: false,
+            restore_index: true,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -81,6 +98,7 @@ enum Update {
         snapshot: git::Result<Snapshot>,
         outcome: git::Result<String>,
         committed: bool,
+        stashed: bool,
     },
     Diff(git::Result<String>),
     ComparisonBranches(git::Result<Vec<String>>),
@@ -101,6 +119,7 @@ struct Desk {
     opening: bool,
     path: TextEdit,
     config: ConfigForm,
+    stash: StashForm,
     github_section: github::Section,
     github_entries: Vec<github::Entry>,
     github_thread: Option<GitHubThread>,
@@ -117,6 +136,7 @@ impl Desk {
             opening: true,
             path: TextEdit::new(""),
             config: ConfigForm::default(),
+            stash: StashForm::default(),
             github_section: github::Section::default(),
             github_entries: Vec::new(),
             github_thread: None,
@@ -308,12 +328,14 @@ impl Desk {
                 |a| a.apply(&path).map(|()| format!("{} complete.", a.label())),
             );
             let committed = matches!(action, Some(Action::Commit(..))) && outcome.is_ok();
+            let stashed = matches!(action, Some(Action::Stash(..))) && outcome.is_ok();
             let snapshot = git::snapshot(&path);
             Update::Repository {
                 path,
                 snapshot,
                 outcome,
                 committed,
+                stashed,
             }
         });
     }
@@ -433,6 +455,7 @@ impl Desk {
                     self.selected_changes = Default::default();
                     self.commit_options = CommitOptions::default();
                     self.config = ConfigForm::default();
+                    self.stash = StashForm::default();
                     self.github_section = github::Section::default();
                     self.github_entries.clear();
                     self.github_thread = None;
@@ -520,12 +543,16 @@ impl Desk {
                 snapshot,
                 outcome,
                 committed,
+                stashed,
             } => {
                 self.swap_draft(Some(&path));
                 self.workspace.selected = Some(path);
                 if committed {
                     self.draft = TextEdit::new("");
                     self.commit_options = CommitOptions::default();
+                }
+                if stashed {
+                    self.stash.message = TextEdit::new("");
                 }
                 self.workspace.notice = outcome.unwrap_or_else(|e| e);
                 self.workspace.snapshot = snapshot

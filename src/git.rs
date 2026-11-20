@@ -135,6 +135,41 @@ pub struct Snapshot {
     pub changes: Vec<Change>,
     pub history: Vec<HistoryRow>,
     pub branches: Vec<String>,
+    pub stashes: Vec<Stash>,
+}
+
+#[derive(Clone)]
+pub struct Stash {
+    pub reference: String,
+    pub id: String,
+    pub description: String,
+}
+
+fn stashes(repo: &Path) -> Result<Vec<Stash>> {
+    output(
+        repo,
+        &[
+            "stash",
+            "list",
+            "--no-color",
+            "--no-show-signature",
+            "--no-notes",
+            "--format=%gd%x00%H%x00%gs",
+        ],
+    )?
+    .lines()
+    .map(|line| {
+        let mut fields = line.splitn(3, '\0');
+        match (fields.next(), fields.next(), fields.next()) {
+            (Some(reference), Some(id), Some(description)) => Ok(Stash {
+                reference: reference.into(),
+                id: id.into(),
+                description: description.into(),
+            }),
+            _ => Err("Git returned an incomplete stash record.".into()),
+        }
+    })
+    .collect()
 }
 
 #[derive(Clone)]
@@ -242,6 +277,7 @@ pub fn snapshot(repo: &Path) -> Result<Snapshot> {
         changes,
         history,
         branches,
+        stashes: if bare { Vec::new() } else { stashes(repo)? },
     })
 }
 
@@ -258,6 +294,12 @@ pub enum Action {
     Stage(Vec<OsString>),
     Unstage(Vec<OsString>, bool),
     Commit(String, CommitOptions),
+    Stash(String, bool),
+    RestoreStash {
+        stash: Stash,
+        pop: bool,
+        restore_index: bool,
+    },
     Switch(String),
     Fetch,
     Pull,
@@ -271,6 +313,9 @@ impl Action {
             Self::Unstage(..) => "Unstage",
             Self::Commit(_, options) if options.amend => "Amend commit",
             Self::Commit(..) => "Commit",
+            Self::Stash(..) => "Stash changes",
+            Self::RestoreStash { pop: true, .. } => "Pop stash",
+            Self::RestoreStash { pop: false, .. } => "Apply stash",
             Self::Switch(_) => "Switch branch",
             Self::Fetch => "Fetch",
             Self::Pull => "Pull",
@@ -300,6 +345,57 @@ impl Action {
                     args.extend(["-m", message]);
                 }
                 return output(repo, &args).map(|_| ());
+            }
+            Self::Stash(message, include_untracked) => {
+                // Stash builds its own pathspec for cleaning up the saved untracked files.
+                let mut args = vec!["--no-literal-pathspecs", "stash", "push"];
+                if *include_untracked {
+                    args.push("--include-untracked");
+                }
+                if !message.trim().is_empty() {
+                    args.extend(["--message", message]);
+                }
+                return output(repo, &args).map(|_| ());
+            }
+            Self::RestoreStash {
+                stash,
+                pop,
+                restore_index,
+            } => {
+                if output(
+                    repo,
+                    &[
+                        "rev-parse",
+                        "--verify",
+                        "--end-of-options",
+                        &stash.reference,
+                    ],
+                )
+                .as_deref()
+                    != Ok(stash.id.as_str())
+                {
+                    return Err(
+                        "The stash list changed. Select the stash again from the updated list."
+                            .into(),
+                    );
+                }
+                let commit = format!("{}^{{commit}}", stash.id);
+                return output(
+                    repo,
+                    &[
+                        "--no-literal-pathspecs",
+                        "stash",
+                        if *pop { "pop" } else { "apply" },
+                        if *restore_index {
+                            "--index"
+                        } else {
+                            "--no-index"
+                        },
+                        "--",
+                        if *pop { &stash.reference } else { &commit },
+                    ],
+                )
+                .map(|_| ());
             }
             Self::Switch(branch) => return output(repo, &["switch", "--", branch]).map(|_| ()),
             Self::Fetch => return output(repo, &["fetch"]).map(|_| ()),

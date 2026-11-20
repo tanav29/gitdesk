@@ -64,6 +64,100 @@ fn enter_path(rt: &mut Runtime<Desk>, path: &Path) {
 }
 
 #[test]
+fn stashes_restore_working_tree_and_index_and_only_pop_removes_the_entry() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init(repo);
+    fixture_git(repo, &["config", "core.autocrlf", "false"]);
+    fs::write(repo.join("tracked.txt"), "base\n").unwrap();
+    fixture_git(repo, &["add", "tracked.txt"]);
+    fixture_git(repo, &["commit", "-m", "Initial"]);
+    fs::write(repo.join("tracked.txt"), "staged\n").unwrap();
+    fixture_git(repo, &["add", "tracked.txt"]);
+    fs::write(repo.join("tracked.txt"), "working\n").unwrap();
+    fs::write(repo.join("untracked.txt"), "new\n").unwrap();
+
+    let mut rt = Runtime::new(
+        Desk::new(Some(repo.to_owned())),
+        view::view,
+        MIN_WINDOW_SIZE,
+        Env {
+            system_dark: false,
+            scale: 1.0,
+        },
+    );
+    rt.poll = Some(|s, _, _| s.poll());
+    settle(&mut rt);
+    click(&mut rt, "tab-Stashes");
+    click(&mut rt, "stash-message");
+    rt.paste("Save all three states");
+    settle(&mut rt);
+    click(&mut rt, "stash-include-untracked");
+    assert!(rt.state.stash.include_untracked);
+    click(&mut rt, "create-stash");
+    let snapshot = rt.state.workspace.snapshot.as_ref().unwrap();
+    assert!(
+        snapshot.changes.is_empty(),
+        "{}: {:?}",
+        rt.state.workspace.notice,
+        snapshot.changes
+    );
+    assert_eq!(snapshot.stashes.len(), 1);
+    assert!(
+        snapshot.stashes[0]
+            .description
+            .contains("Save all three states")
+    );
+    assert!(rt.state.stash.message.text.is_empty());
+
+    click(&mut rt, "apply-stash@{0}");
+    assert_eq!(fixture_git(repo, &["show", ":tracked.txt"]), "staged");
+    assert_eq!(
+        fs::read_to_string(repo.join("tracked.txt")).unwrap(),
+        "working\n"
+    );
+    assert!(repo.join("untracked.txt").exists());
+    assert_eq!(
+        rt.state.workspace.snapshot.as_ref().unwrap().stashes.len(),
+        1
+    );
+
+    click(&mut rt, "pop-stash@{0}");
+    assert_eq!(
+        rt.state.workspace.snapshot.as_ref().unwrap().stashes.len(),
+        1
+    );
+    fixture_git(
+        repo,
+        &[
+            "restore",
+            "--source=HEAD",
+            "--staged",
+            "--worktree",
+            "tracked.txt",
+        ],
+    );
+    fs::remove_file(repo.join("untracked.txt")).unwrap();
+    click(&mut rt, "refresh");
+    click(&mut rt, "pop-stash@{0}");
+    assert_eq!(fixture_git(repo, &["show", ":tracked.txt"]), "staged");
+    assert_eq!(
+        fs::read_to_string(repo.join("tracked.txt")).unwrap(),
+        "working\n"
+    );
+    assert!(repo.join("untracked.txt").exists());
+    assert!(
+        rt.state
+            .workspace
+            .snapshot
+            .as_ref()
+            .unwrap()
+            .stashes
+            .is_empty()
+    );
+}
+
+#[test]
 fn commit_menu_supports_sign_off_empty_commits_and_amending() {
     let tmp = tempfile::tempdir().unwrap();
     let repo = tmp.path();
