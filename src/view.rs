@@ -1,4 +1,4 @@
-use super::{Desk, DiffMode, Tab};
+use super::{BranchPrompt, Desk, DiffMode, Tab};
 use crate::git::{Action, Change, CommitOptions, ConfigEdit, Scope, Snapshot};
 use rune::{Color, Cx, El, FileDialogOptions, ScrollSpec, TextStyle, col, el, row, text};
 use rune_kit::{
@@ -774,37 +774,81 @@ fn detail(s: &Desk, data: &Snapshot, k: &Kit, layers: &mut Vec<El>) -> El {
         Tab::Changes if !data.bare => changes(s, data, k, layers),
         Tab::Branches => {
             if data.has_head {
-                body = body
+                body = body.child(
+                    row()
+                        .gap(8.0)
+                        .center_y()
+                        .child(
+                            TextInput::new(&s.branch_name)
+                                .height(36.0)
+                                .label("New branch name")
+                                .placeholder("New branch name")
+                                .on_edit(|s: &mut Desk| &mut s.branch_name)
+                                .on_submit(|s: &mut Desk, _| s.create_branch())
+                                .disabled(s.busy)
+                                .build(k)
+                                .grow(1.0)
+                                .key("new-branch-name"),
+                        )
+                        .child(
+                            button("Create branch")
+                                .disabled(s.busy || s.branch_name.text.trim().is_empty())
+                                .on_press(Desk::create_branch)
+                                .build(k)
+                                .key("create-branch"),
+                        ),
+                );
+            }
+            if let Some(prompt) = &s.branch_prompt {
+                let (message, needs_name, action) = match prompt {
+                    BranchPrompt::Rename(branch) => (format!("Rename {branch}"), true, "Rename"),
+                    BranchPrompt::CreateFrom(branch) => {
+                        (format!("Create branch from {branch}"), true, "Create")
+                    }
+                    BranchPrompt::Delete(branch) => (
+                        format!("Delete {branch}? Git will keep unmerged branches."),
+                        false,
+                        "Delete branch",
+                    ),
+                };
+                let mut form = col()
+                    .gap(6.0)
+                    .child(label(message, 14.0, 600.0, INK).wrap_anywhere());
+                let mut controls = row().gap(8.0).center_y();
+                if needs_name {
+                    controls = controls.child(
+                        TextInput::new(&s.branch_prompt_name)
+                            .height(36.0)
+                            .label("Branch name")
+                            .placeholder("Branch name")
+                            .on_edit(|s: &mut Desk| &mut s.branch_prompt_name)
+                            .on_submit(|s: &mut Desk, _| s.submit_branch_prompt())
+                            .disabled(s.busy)
+                            .build(k)
+                            .grow(1.0)
+                            .key("branch-prompt-name"),
+                    );
+                }
+                controls = controls
                     .child(
-                        row()
-                            .gap(8.0)
-                            .center_y()
-                            .child(
-                                TextInput::new(&s.branch_name)
-                                    .height(36.0)
-                                    .label("New branch name")
-                                    .placeholder("New branch name")
-                                    .on_edit(|s: &mut Desk| &mut s.branch_name)
-                                    .on_submit(|s: &mut Desk, _| s.create_branch())
-                                    .disabled(s.busy)
-                                    .build(k)
-                                    .grow(1.0)
-                                    .key("new-branch-name"),
+                        button(action)
+                            .disabled(
+                                s.busy
+                                    || (needs_name && s.branch_prompt_name.text.trim().is_empty()),
                             )
-                            .child(
-                                button("Create branch")
-                                    .disabled(s.busy || s.branch_name.text.trim().is_empty())
-                                    .on_press(Desk::create_branch)
-                                    .build(k)
-                                    .key("create-branch"),
-                            ),
+                            .on_press(Desk::submit_branch_prompt)
+                            .build(k)
+                            .key("confirm-branch-action"),
                     )
-                    .child(label(
-                        "Merge or rebase the current branch using a branch below.",
-                        13.0,
-                        400.0,
-                        MUTED,
-                    ));
+                    .child(
+                        button("Cancel")
+                            .disabled(s.busy)
+                            .on_press(|s: &mut Desk| s.branch_prompt = None)
+                            .build(k)
+                            .key("cancel-branch-action"),
+                    );
+                form = form.child(controls);
+                body = body.child(form).child(divider());
             }
             for branch in &data.branches {
                 let current = branch == &data.branch;
@@ -815,21 +859,8 @@ fn detail(s: &Desk, data: &Snapshot, k: &Kit, layers: &mut Vec<El>) -> El {
                     .child(label(branch, 14.0, 500.0, INK).grow(1.0).truncate());
                 if current {
                     line = line.child(label("Current", 12.0, 500.0, ACCENT));
-                } else if !data.bare {
-                    line = line.child(command(k, "Switch", Action::Switch(branch.clone()), s.busy));
-                    line = line.child(command(
-                        k,
-                        "Merge into current",
-                        Action::Merge(branch.clone()),
-                        s.busy,
-                    ));
-                    line = line.child(command(
-                        k,
-                        "Rebase current onto",
-                        Action::Rebase(branch.clone()),
-                        s.busy,
-                    ));
                 }
+                line = line.child(branch_menu(s, data, branch, k, layers));
                 body = body.child(line).child(divider());
             }
             if data.branches.is_empty() {
@@ -865,6 +896,64 @@ fn detail(s: &Desk, data: &Snapshot, k: &Kit, layers: &mut Vec<El>) -> El {
         }
         Tab::History | Tab::Changes => history::view(s, &data.history),
     }
+}
+
+fn branch_menu(s: &Desk, data: &Snapshot, branch: &str, k: &Kit, layers: &mut Vec<El>) -> El {
+    let name = branch.to_owned();
+    let menu_name = name.clone();
+    let current = branch == data.branch;
+    let trigger = button("Actions")
+        .variant(ButtonVariant::Outline)
+        .icon(k.glyph.chevron_down)
+        .help(format!("Actions for {branch}"))
+        .disabled(s.busy)
+        .on_press(move |s: &mut Desk| {
+            s.branch_menu = if s.branch_menu.as_deref() == Some(&menu_name) {
+                None
+            } else {
+                Some(menu_name.clone())
+            };
+        })
+        .build(k)
+        .key(format!("branch-actions-{branch}"));
+    let mut menu = Menu::new(format!("branch-menu-{branch}"))
+        .trigger(trigger)
+        .open(s.branch_menu.as_deref() == Some(branch))
+        .on_close(|s: &mut Desk| s.branch_menu = None)
+        .placement(Placement::TopEnd)
+        .min_width(230.0);
+    if !data.bare && !current {
+        for (title, action) in [
+            ("Switch", Action::Switch(name.clone())),
+            ("Merge into current", Action::Merge(name.clone())),
+            ("Rebase current onto this", Action::Rebase(name.clone())),
+        ] {
+            menu = menu
+                .item(MenuItem::new(title).on_select(move |s: &mut Desk| s.act(action.clone())));
+        }
+        menu = menu.separator();
+    }
+    for (title, prompt) in [
+        (
+            "Create branch from this",
+            BranchPrompt::CreateFrom(name.clone()),
+        ),
+        ("Rename", BranchPrompt::Rename(name.clone())),
+    ] {
+        menu = menu.item(
+            MenuItem::new(title).on_select(move |s: &mut Desk| s.prompt_branch(prompt.clone())),
+        );
+    }
+    if !current {
+        menu =
+            menu.separator()
+                .item(
+                    MenuItem::new("Delete branch…").on_select(move |s: &mut Desk| {
+                        s.prompt_branch(BranchPrompt::Delete(name.clone()))
+                    }),
+                );
+    }
+    menu.build(k, layers)
 }
 
 pub fn view(s: &Desk, _: &mut Cx<Desk>) -> El {

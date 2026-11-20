@@ -312,6 +312,9 @@ pub enum Action {
     },
     Switch(String),
     CreateBranch(String),
+    CreateBranchFrom(String, String),
+    RenameBranch(String, String),
+    DeleteBranch(String),
     Merge(String),
     Rebase(String),
     Fetch,
@@ -331,6 +334,9 @@ impl Action {
             Self::RestoreStash { pop: false, .. } => "Apply stash",
             Self::Switch(_) => "Switch branch",
             Self::CreateBranch(_) => "Create branch",
+            Self::CreateBranchFrom(..) => "Create branch",
+            Self::RenameBranch(..) => "Rename branch",
+            Self::DeleteBranch(_) => "Delete branch",
             Self::Merge(_) => "Merge branch",
             Self::Rebase(_) => "Rebase branch",
             Self::Fetch => "Fetch",
@@ -417,6 +423,21 @@ impl Action {
             Self::CreateBranch(branch) => {
                 output(repo, &["check-ref-format", "--branch", branch])?;
                 return output(repo, &["branch", "--", branch]).map(|_| ());
+            }
+            Self::CreateBranchFrom(branch, source) => {
+                output(repo, &["check-ref-format", "--branch", branch])?;
+                return output(
+                    repo,
+                    &["branch", "--", branch, &format!("refs/heads/{source}")],
+                )
+                .map(|_| ());
+            }
+            Self::RenameBranch(old, new) => {
+                output(repo, &["check-ref-format", "--branch", new])?;
+                return output(repo, &["branch", "-m", "--", old, new]).map(|_| ());
+            }
+            Self::DeleteBranch(branch) => {
+                return output(repo, &["branch", "-d", "--", branch]).map(|_| ());
             }
             Self::Merge(branch) => {
                 return output(

@@ -35,6 +35,43 @@ fn init(dir: &Path) {
 }
 
 #[test]
+fn branch_management_renames_copies_and_safely_deletes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init(repo);
+    fs::write(repo.join("base"), "base").unwrap();
+    fixture_git(repo, &["add", "."]);
+    fixture_git(repo, &["commit", "-m", "base"]);
+    git::Action::CreateBranchFrom("copy".into(), "main".into())
+        .apply(repo)
+        .unwrap();
+    git::Action::RenameBranch("copy".into(), "renamed".into())
+        .apply(repo)
+        .unwrap();
+    assert!(
+        git::Action::RenameBranch("renamed".into(), "-invalid".into())
+            .apply(repo)
+            .is_err()
+    );
+    fixture_git(repo, &["switch", "renamed"]);
+    fs::write(repo.join("new"), "new").unwrap();
+    fixture_git(repo, &["add", "."]);
+    fixture_git(repo, &["commit", "-m", "unmerged"]);
+    fixture_git(repo, &["switch", "main"]);
+    assert!(
+        git::Action::DeleteBranch("renamed".into())
+            .apply(repo)
+            .is_err()
+    );
+    assert!(fixture_git(repo, &["branch", "--list", "renamed"]).contains("renamed"));
+    fixture_git(repo, &["merge", "--ff-only", "renamed"]);
+    git::Action::DeleteBranch("renamed".into())
+        .apply(repo)
+        .unwrap();
+    assert!(fixture_git(repo, &["branch", "--list", "renamed"]).is_empty());
+}
+
+#[test]
 fn branch_actions_create_merge_and_rebase_current_branch() {
     let tmp = tempfile::tempdir().unwrap();
     let repo = tmp.path();
