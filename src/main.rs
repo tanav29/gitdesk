@@ -7,11 +7,17 @@ mod tests;
 mod view;
 
 use git::{Action, CommitOptions, ConfigEdit, Entries, Scope, Snapshot};
-use rune::{AppSpec, Latest, TextEdit};
+use rune::{AppSpec, Chord, KeyEvent, Latest, TextEdit, Tx};
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use terminal::Terminal;
+
+const PRIMARY_KEY: &str = if cfg!(target_os = "macos") {
+    "⌘"
+} else {
+    "Ctrl"
+};
 
 const MIN_WINDOW_SIZE: (f32, f32) = (740.0, 460.0);
 
@@ -346,6 +352,86 @@ impl Desk {
         }
     }
 
+    fn show_opener(&mut self) {
+        self.opening = true;
+        self.workspace.notice.clear();
+        self.path = TextEdit::new("");
+    }
+
+    fn refresh(&mut self) {
+        if self.tab == Tab::Diff(DiffMode::Compare) && self.comparison.compared {
+            self.compare_branches();
+        } else {
+            self.select_tab(self.tab);
+        }
+    }
+
+    fn tabs(&self) -> [(&'static str, Tab); 8] {
+        let diff = if self.selected_commit.is_some() {
+            DiffMode::Commit
+        } else if self
+            .workspace
+            .snapshot
+            .as_ref()
+            .is_some_and(|data| data.bare)
+        {
+            DiffMode::Compare
+        } else {
+            DiffMode::WorkingTree
+        };
+        [
+            ("Changes", Tab::Changes),
+            ("Diff", Tab::Diff(diff)),
+            ("History", Tab::History),
+            ("Branches", Tab::Branches),
+            ("Stashes", Tab::Stashes),
+            ("Settings", Tab::Settings),
+            ("GitHub", Tab::GitHub),
+            ("Terminal", Tab::Terminal),
+        ]
+    }
+
+    fn key(&mut self, event: &KeyEvent, tx: &mut Tx) -> bool {
+        if self.busy {
+            return false;
+        }
+        let pressed = |shortcut: &str| {
+            Chord::parse(shortcut)
+                .expect("valid application shortcut")
+                .matches_tx(event, tx)
+        };
+        if self.opening {
+            if self.workspace.selected.is_some() && pressed("escape") {
+                self.opening = false;
+                self.workspace.notice.clear();
+                return true;
+            }
+            return false;
+        }
+        if pressed("mod+o") {
+            self.show_opener();
+            return true;
+        }
+        if pressed("f5") {
+            self.refresh();
+            return true;
+        }
+        let bare = self
+            .workspace
+            .snapshot
+            .as_ref()
+            .is_some_and(|data| data.bare);
+        for ((_, tab), shortcut) in self.tabs().into_iter().zip([
+            "mod+1", "mod+2", "mod+3", "mod+4", "mod+5", "mod+6", "mod+7", "mod+8",
+        ]) {
+            if !(bare && matches!(tab, Tab::Changes | Tab::Stashes)) && pressed(shortcut) {
+                self.select_tab(tab);
+                return true;
+            }
+        }
+        false
+    }
+
     fn select_tab(&mut self, tab: Tab) {
         if self.busy {
             return;
@@ -612,8 +698,9 @@ fn main() {
             s.waker = Some(waker);
         }),
         poll: Some(|s: &mut Desk, _, _| s.poll()),
+        on_key: Some(Desk::key),
         ..AppSpec::new(
-            "Gitdesk",
+            "Git",
             (1000.0, 640.0),
             || Desk::new(rune::extra_args().first().map(PathBuf::from)),
             view::view,

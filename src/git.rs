@@ -229,37 +229,34 @@ fn history(repo: &Path, has_head: bool) -> Result<Vec<HistoryRow>> {
         .collect()
 }
 
-pub fn snapshot(repo: &Path) -> Result<Snapshot> {
-    let bare = output(repo, &["rev-parse", "--is-bare-repository"])? == "true";
-    let head = output(repo, &["rev-parse", "--verify", "--short", "HEAD"]).ok();
-    let branch = output(repo, &["symbolic-ref", "--short", "-q", "HEAD"])
-        .unwrap_or_else(|_| format!("Detached at {}", head.as_deref().unwrap_or("HEAD")));
+fn changes(repo: &Path) -> Result<Vec<Change>> {
     let mut changes = Vec::new();
-    if !bare {
-        let bytes = git(
-            repo,
-            &[
-                "--no-optional-locks".as_ref(),
-                "status".as_ref(),
-                "--porcelain=v1".as_ref(),
-                "-z".as_ref(),
-                "--no-renames".as_ref(),
-                "-uall".as_ref(),
-            ],
-        )?;
-        for record in bytes.split(|&c| c == 0).filter(|r| !r.is_empty()) {
-            if record.len() < 4 {
-                return Err("Git returned an incomplete file status".into());
-            }
-            changes.push(Change {
-                index: record[0],
-                work: record[1],
-                path: file_name(&record[3..])?,
-            });
+    let bytes = git(
+        repo,
+        &[
+            "--no-optional-locks".as_ref(),
+            "status".as_ref(),
+            "--porcelain=v1".as_ref(),
+            "-z".as_ref(),
+            "--no-renames".as_ref(),
+            "-uall".as_ref(),
+        ],
+    )?;
+    for record in bytes.split(|&c| c == 0).filter(|r| !r.is_empty()) {
+        if record.len() < 4 {
+            return Err("Git returned an incomplete file status".into());
         }
+        changes.push(Change {
+            index: record[0],
+            work: record[1],
+            path: file_name(&record[3..])?,
+        });
     }
-    let history = history(repo, head.is_some())?;
-    let branches = output(
+    Ok(changes)
+}
+
+fn local_branches(repo: &Path) -> Result<Vec<String>> {
+    Ok(output(
         repo,
         &[
             "for-each-ref",
@@ -269,15 +266,28 @@ pub fn snapshot(repo: &Path) -> Result<Snapshot> {
     )?
     .lines()
     .map(str::to_owned)
-    .collect();
-    Ok(Snapshot {
-        branch,
-        bare,
-        has_head: head.is_some(),
-        changes,
-        history,
-        branches,
-        stashes: if bare { Vec::new() } else { stashes(repo)? },
+    .collect())
+}
+
+pub fn snapshot(repo: &Path) -> Result<Snapshot> {
+    let bare = output(repo, &["rev-parse", "--is-bare-repository"])? == "true";
+    std::thread::scope(|scope| {
+        let branches = scope.spawn(|| local_branches(repo));
+        let changes = (!bare).then(|| scope.spawn(|| changes(repo)));
+        let stashes = (!bare).then(|| scope.spawn(|| stashes(repo)));
+        let head = output(repo, &["rev-parse", "--verify", "--short", "HEAD"]).ok();
+        let branch = output(repo, &["symbolic-ref", "--short", "-q", "HEAD"])
+            .unwrap_or_else(|_| format!("Detached at {}", head.as_deref().unwrap_or("HEAD")));
+        let history = history(repo, head.is_some());
+        Ok(Snapshot {
+            branch,
+            bare,
+            has_head: head.is_some(),
+            changes: changes.map_or_else(|| Ok(Vec::new()), |job| job.join().unwrap())?,
+            history: history?,
+            branches: branches.join().unwrap()?,
+            stashes: stashes.map_or_else(|| Ok(Vec::new()), |job| job.join().unwrap())?,
+        })
     })
 }
 

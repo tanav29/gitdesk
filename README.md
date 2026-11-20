@@ -1,20 +1,30 @@
-# Gitdesk
-
-Gitdesk is a native Git manager built with [Anomaly’s Rune UI framework](https://github.com/anomalyco/rune). Open a local repository by typing its path or choosing its folder.
+# Git workspace
 
 ## Run
 
-With Git and the stable Rust toolchain installed, run this from the Gitdesk source directory.
+With Git and the stable Rust toolchain installed, run this from the source directory.
 
 ```powershell
 cargo run --locked
 ```
 
-Pass a repository path to open it at launch, for example `cargo run --locked -- "C:\Projects\my repo"`. **Open repository…** switches to another repository or linked worktree.
+Pass a repository path to open it at launch, for example `cargo run --locked -- "C:\Projects\my repo"`. **Open…** switches to another repository or linked worktree.
+
+## Keyboard shortcuts
+
+Use Ctrl on Windows and Linux, or Command on macOS.
+
+| Shortcut | Action |
+| --- | --- |
+| Ctrl/Command + O | Open a repository |
+| Esc | Cancel the repository picker when a repository is open |
+| Ctrl/Command + 1 through 8 | Changes, Diff, History, Branches, Stashes, Settings, GitHub, Terminal |
+| F5 | Refresh the current view |
+| Ctrl + F6 | Move focus from the terminal to navigation |
 
 ## Working with a repository
 
-Use **Changes** to stage or unstage individual files. To work on multiple files, use the checkboxes beside their names or the checkbox in a section header, then choose **Stage selected** or **Unstage selected**. Enter a commit message and choose **Commit staged** to commit the index. Gitdesk keeps a separate message draft for each repository until you close the app.
+Use **Changes** to stage or unstage individual files. To work on multiple files, use the checkboxes beside their names or the checkbox in a section header, then choose **Stage selected** or **Unstage selected**. Enter a commit message and choose **Commit staged** to commit the index. The app keeps a separate message draft for each repository until you close the app.
 
 The **More** menu beside the commit button lets you add a signed-off-by trailer, sign with your configured Git signing key, amend the last commit, or allow a commit with no file changes. When amending, leave the message blank to reuse the previous message. Options apply to the next successful commit.
 

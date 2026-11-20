@@ -23,7 +23,7 @@ const ADDED: &str = "#8cd4a5";
 const REMOVED: &str = "#f2a5a3";
 
 pub(crate) fn button(title: impl Into<String>) -> Button {
-    Button::new(title).control_size(ControlSize::Regular)
+    Button::new(title).control_size(ControlSize::Small)
 }
 
 fn color(hex: &str) -> Color {
@@ -54,40 +54,6 @@ fn command(k: &Kit, name: &str, action: Action, disabled: bool) -> El {
         .build(k)
 }
 
-fn brand() -> El {
-    let mark = el()
-        .size(30.0, 30.0)
-        .radius(6.0)
-        .fill(color("#315652"))
-        .child(el().size(2.0, 15.0).absolute(9.0, 7.0).fill(Color::WHITE))
-        .child(el().size(10.0, 2.0).absolute(10.0, 14.0).fill(Color::WHITE))
-        .child(el().size(2.0, 7.0).absolute(19.0, 9.0).fill(Color::WHITE))
-        .child(
-            el().size(6.0, 6.0)
-                .absolute(7.0, 5.0)
-                .radius(3.0)
-                .fill(Color::WHITE),
-        )
-        .child(
-            el().size(6.0, 6.0)
-                .absolute(7.0, 20.0)
-                .radius(3.0)
-                .fill(Color::WHITE),
-        )
-        .child(
-            el().size(6.0, 6.0)
-                .absolute(17.0, 6.0)
-                .radius(3.0)
-                .fill(Color::WHITE),
-        );
-    row()
-        .h(30.0)
-        .gap(8.0)
-        .center_y()
-        .child(mark)
-        .child(label("Gitdesk", 16.0, 600.0, INK))
-}
-
 fn opener(s: &Desk, k: &Kit) -> El {
     let browse = button("Browse…")
         .disabled(s.busy)
@@ -108,7 +74,7 @@ fn opener(s: &Desk, k: &Kit) -> El {
         .build(k)
         .key("browse");
     let mut actions = row().gap(8.0).child(
-        button("Open repository")
+        button("Open")
             .variant(ButtonVariant::Contrast)
             .disabled(s.busy || s.path.text.trim().is_empty())
             .on_press(|s: &mut Desk| s.open_input())
@@ -128,15 +94,9 @@ fn opener(s: &Desk, k: &Kit) -> El {
     }
     let mut panel = col()
         .w(470.0)
-        .padding(18.0)
+        .padding(12.0)
         .gap(8.0)
-        .fill(color(PAGE))
-        .border(1.0, color(RULE))
-        .radius(8.0)
-        .child(brand())
-        .child(divider())
-        .child(label("Open a repository", 19.0, 600.0, INK))
-        .child(label("Repository path", 13.0, 500.0, MUTED))
+        .child(label("Open repository", 16.0, 600.0, INK))
         .child(
             row()
                 .gap(8.0)
@@ -145,13 +105,14 @@ fn opener(s: &Desk, k: &Kit) -> El {
                     TextInput::new(&s.path)
                         .height(28.0)
                         .label("Repository path")
-                        .placeholder("Enter a local repository path")
+                        .placeholder("Local repository path")
                         .on_edit(|s: &mut Desk| &mut s.path)
                         .on_submit(|s: &mut Desk, _| s.open_input())
                         .disabled(s.busy)
                         .build(k)
                         .grow(1.0)
-                        .key("repo-path"),
+                        .key("repo-path")
+                        .autofocus(),
                 )
                 .child(browse),
         )
@@ -175,32 +136,12 @@ fn sidebar(s: &Desk, k: &Kit) -> El {
         s.tab
     };
     let mut rail = col()
-        .w(156.0)
+        .w(120.0)
         .h_full()
-        .padding(10.0)
-        .gap(4.0)
-        .fill(color(RAIL))
-        .child(brand())
-        .child(divider());
-    for (title, tab) in [
-        ("Changes", Tab::Changes),
-        (
-            "Diff",
-            Tab::Diff(if s.selected_commit.is_some() {
-                DiffMode::Commit
-            } else if bare {
-                DiffMode::Compare
-            } else {
-                DiffMode::WorkingTree
-            }),
-        ),
-        ("History", Tab::History),
-        ("Branches", Tab::Branches),
-        ("Stashes", Tab::Stashes),
-        ("Settings", Tab::Settings),
-        ("GitHub", Tab::GitHub),
-        ("Terminal", Tab::Terminal),
-    ] {
+        .padding(8.0)
+        .gap(2.0)
+        .fill(color(RAIL));
+    for (index, (title, tab)) in s.tabs().into_iter().enumerate() {
         if bare && matches!(tab, Tab::Changes | Tab::Stashes) {
             continue;
         }
@@ -210,12 +151,14 @@ fn sidebar(s: &Desk, k: &Kit) -> El {
         let active = tab == current || matches!((tab, current), (Tab::Diff(_), Tab::Diff(_)));
         let mut item = row()
             .key(format!("tab-{title}"))
-            .h(30.0)
+            .h(26.0)
             .px(6.0)
             .gap(7.0)
             .center_y()
             .role("button")
             .label(title)
+            .help(title)
+            .help_keys([super::PRIMARY_KEY, &(index + 1).to_string()])
             .focusable(!s.busy)
             .radius(5.0)
             .focus_ring(2.0, 0.0, color(ACCENT))
@@ -242,14 +185,12 @@ fn sidebar(s: &Desk, k: &Kit) -> El {
         rail = rail.child(item);
     }
     rail.child(el().grow(1.0)).child(divider()).child(
-        button("Open repository…")
+        button("Open…")
             .disabled(s.busy)
-            .on_press(|s: &mut Desk| {
-                s.opening = true;
-                s.workspace.notice.clear();
-                s.path = rune::TextEdit::new("");
-            })
+            .on_press(Desk::show_opener)
             .build(k)
+            .help("Open repository")
+            .help_keys([super::PRIMARY_KEY, "O"])
             .key("change-repository"),
     )
 }
@@ -449,7 +390,7 @@ fn changes(s: &Desk, data: &Snapshot, k: &Kit, layers: &mut Vec<El>) -> El {
     checkbox_kit.c.border_weak = color("#707d88");
     checkbox_kit.c.border_hover = color(MUTED);
     checkbox_kit.c.std_border = color(ACCENT);
-    let mut files = col().gap(12.0);
+    let mut files = col().gap(8.0);
     for staged in [false, true] {
         let selection = &s.selected_changes[usize::from(staged)];
         let section: Vec<_> = data
@@ -468,10 +409,10 @@ fn changes(s: &Desk, data: &Snapshot, k: &Kit, layers: &mut Vec<El>) -> El {
         let all = count > 0 && count == paths.len();
         let mixed = count > 0 && !all;
         let action = if staged { "Unstage" } else { "Stage" };
-        let mut group = col().border(1.0, color(RULE)).clip_rounded(6.0).child(
+        let mut group = col().child(
             row()
-                .h(42.0)
-                .px(10.0)
+                .h(32.0)
+                .px(6.0)
                 .center_y()
                 .gap(10.0)
                 .fill(color(HOVER))
@@ -491,7 +432,7 @@ fn changes(s: &Desk, data: &Snapshot, k: &Kit, layers: &mut Vec<El>) -> El {
                         })
                         .build(&checkbox_kit)
                         .w(24.0)
-                        .h(32.0)
+                        .h(26.0)
                         .key(format!("select-all-{action}")),
                 )
                 .child(label(name, 15.0, 600.0, INK))
@@ -550,8 +491,8 @@ fn changes(s: &Desk, data: &Snapshot, k: &Kit, layers: &mut Vec<El>) -> El {
             let path = c.path.clone();
             group = group.child(divider()).child(
                 row()
-                    .h(36.0)
-                    .px(10.0)
+                    .h(28.0)
+                    .px(6.0)
                     .center_y()
                     .gap(10.0)
                     .fill(if checked {
@@ -576,7 +517,7 @@ fn changes(s: &Desk, data: &Snapshot, k: &Kit, layers: &mut Vec<El>) -> El {
                             })
                             .build(&checkbox_kit)
                             .w(24.0)
-                            .h(32.0)
+                            .h(26.0)
                             .key(format!(
                                 "select-{}-{}",
                                 action.label(),
@@ -896,17 +837,13 @@ pub fn view(s: &Desk, _: &mut Cx<Desk>) -> El {
         .unwrap_or_else(|| "Workspace".into());
     let refresh = button("Refresh")
         .disabled(s.busy)
-        .on_press(|s: &mut Desk| {
-            if s.tab == Tab::Diff(DiffMode::Compare) && s.comparison.compared {
-                s.compare_branches();
-            } else {
-                s.select_tab(s.tab);
-            }
-        })
+        .on_press(Desk::refresh)
         .build(&k)
+        .help("Refresh")
+        .help_keys(["F5"])
         .key("refresh");
     let mut toolbar = row().center_y().gap(6.0).child(
-        label(title, 20.0, 600.0, INK)
+        label(title, 16.0, 600.0, INK)
             .grow(1.0)
             .min_w(0.0)
             .truncate(),
@@ -940,8 +877,8 @@ pub fn view(s: &Desk, _: &mut Cx<Desk>) -> El {
         .grow(1.0)
         .min_w(0.0)
         .h_full()
-        .padding(12.0)
-        .gap(8.0)
+        .padding(8.0)
+        .gap(6.0)
         .child(header)
         .child(divider());
     if let Some(data) = &w.snapshot {
