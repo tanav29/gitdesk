@@ -43,8 +43,8 @@ pub(super) fn view(s: &Desk, history: &[HistoryRow]) -> El {
             .as_ref()
             .is_some_and(|selected| selected.id == commit.id);
         let mut item = item
-            .h(30.0)
-            .radius(4.0)
+            .h(34.0)
+            .radius(5.0)
             .role("button")
             .label(format!("{} {}", commit.short_id, commit.title))
             .description("View commit diff")

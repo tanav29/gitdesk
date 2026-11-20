@@ -1,9 +1,9 @@
 use super::{BranchPrompt, Desk, DiffMode, Tab};
 use crate::git::{Action, Change, CommitOptions, ConfigEdit, Scope, Snapshot};
-use rune::{Color, Cx, El, FileDialogOptions, ScrollSpec, TextStyle, col, el, row, text};
+use rune::{Color, Cx, El, FileDialogOptions, ScrollSpec, Shadow, TextStyle, col, el, row, text};
 use rune_kit::{
-    Button, ButtonVariant, Checkbox, ControlSize, Kit, Menu, MenuItem, Placement, Select,
-    SelectAppearance, TextInput, root,
+    Button, ButtonVariant, Checkbox, ControlSize, Kit, Menu, MenuItem, PaletteFocus, PaletteSeed,
+    Placement, Select, SelectAppearance, TextInput, root,
 };
 
 mod diff;
@@ -11,31 +11,72 @@ mod github_thread;
 mod history;
 mod stashes;
 
-const PAGE: &str = "#171a1e";
-const RAIL: &str = "#121417";
-const HOVER: &str = "#252a30";
-const SELECTED: &str = "#223438";
-const INK: &str = "#e5eaee";
-const MUTED: &str = "#a0abb5";
-const ACCENT: &str = "#8fd8cf";
-const RULE: &str = "#30363d";
-const ADDED: &str = "#8cd4a5";
-const REMOVED: &str = "#f2a5a3";
+const PAGE: &str = "#ffffff";
+const RAIL: &str = "#f5f7fa";
+const HOVER: &str = "#edf1f6";
+const SELECTED: &str = "#e8efff";
+pub(crate) const INK: &str = "#172437";
+pub(crate) const MUTED: &str = "#526176";
+pub(crate) const ACCENT: &str = "#254eb3";
+pub(crate) const RULE: &str = "#dce3ec";
+const ADDED: &str = "#21623e";
+const REMOVED: &str = "#a3323a";
+
+fn light_kit() -> Kit {
+    let mut kit = Kit::from_palette_focus(
+        PaletteSeed {
+            bg: color(PAGE),
+            fg: color(INK),
+            accent: color(ACCENT),
+        },
+        PaletteFocus::Accent,
+    );
+    let c = &mut kit.c;
+    c.bg_button_neutral = color(PAGE);
+    c.bg_contrast = color(ACCENT);
+    c.text_faint = color(MUTED);
+    c.border_muted = color(RULE);
+    c.border_weak = color("#8190a3");
+    c.std_border = color(ACCENT);
+    c.std_icon = color(ACCENT);
+    c.surface_weak = color(SELECTED);
+    kit.ring = None;
+    kit.elevation = kit.elevation.with_input(vec![Shadow {
+        spread: 1.0,
+        inset: true,
+        color: color("#a2afbf"),
+        ..Shadow::default()
+    }]);
+    kit
+}
 
 pub(crate) fn button(title: impl Into<String>) -> Button {
-    Button::new(title).control_size(ControlSize::Regular)
+    Button::new(title).control_size(ControlSize::Large)
 }
 
-fn color(hex: &str) -> Color {
+pub(crate) fn color(hex: &str) -> Color {
     rune::color::hex(hex).expect("valid palette color")
 }
-fn label(value: impl Into<String>, size: f32, weight: f32, ink: &str) -> El {
+pub(crate) fn label(value: impl Into<String>, size: f32, weight: f32, ink: &str) -> El {
     text(value.into())
         .font(TextStyle::new(size, weight))
         .color(color(ink))
 }
 fn divider() -> El {
     el().w_full().h(1.0).fill(color(RULE))
+}
+fn heading(title: &str, size: f32) -> El {
+    label(title, size, 650.0, INK).role("heading").level(1)
+}
+fn branch_badge(title: &str) -> El {
+    row()
+        .h(24.0)
+        .max_w(140.0)
+        .px(8.0)
+        .center_y()
+        .radius(5.0)
+        .fill(color(SELECTED))
+        .child(label(title, 12.0, 600.0, ACCENT).truncate())
 }
 fn scroll_list(body: El) -> El {
     col()
@@ -56,6 +97,7 @@ fn command(k: &Kit, name: &str, action: Action, disabled: bool) -> El {
 
 fn opener(s: &Desk, k: &Kit) -> El {
     let browse = button("Browse…")
+        .variant(ButtonVariant::Outline)
         .disabled(s.busy)
         .on_press_tx(|s: &mut Desk, tx| {
             tx.open_folder(
@@ -72,18 +114,13 @@ fn opener(s: &Desk, k: &Kit) -> El {
             );
         })
         .build(k)
+        .h(36.0)
         .key("browse");
-    let mut actions = row().gap(8.0).child(
-        button("Open")
-            .variant(ButtonVariant::Contrast)
-            .disabled(s.busy || s.path.text.trim().is_empty())
-            .on_press(|s: &mut Desk| s.open_input())
-            .build(k)
-            .key("open-path"),
-    );
+    let mut actions = row().gap(8.0).justify_end();
     if s.workspace.selected.is_some() {
         actions = actions.child(
             button("Cancel")
+                .variant(ButtonVariant::Ghost)
                 .disabled(s.busy)
                 .on_press(|s: &mut Desk| {
                     s.opening = false;
@@ -92,40 +129,67 @@ fn opener(s: &Desk, k: &Kit) -> El {
                 .build(k),
         );
     }
+    actions = actions.child(
+        button("Open")
+            .variant(ButtonVariant::Contrast)
+            .disabled(s.busy || s.path.text.trim().is_empty())
+            .on_press(|s: &mut Desk| s.open_input())
+            .build(k)
+            .w(88.0)
+            .key("open-path"),
+    );
     let mut panel = col()
-        .w(470.0)
-        .padding(12.0)
-        .gap(8.0)
-        .child(label("Open repository", 16.0, 600.0, INK))
+        .w(510.0)
+        .padding(24.0)
+        .gap(16.0)
+        .radius(10.0)
+        .border(1.0, color(RULE))
+        .fill(color(PAGE))
         .child(
-            row()
-                .gap(8.0)
-                .center_y()
-                .child(
-                    TextInput::new(&s.path)
-                        .height(28.0)
-                        .label("Repository path")
-                        .placeholder("Local repository path")
-                        .on_edit(|s: &mut Desk| &mut s.path)
-                        .on_submit(|s: &mut Desk, _| s.open_input())
-                        .disabled(s.busy)
-                        .build(k)
-                        .grow(1.0)
-                        .key("repo-path")
-                        .autofocus(),
-                )
-                .child(browse),
+            col()
+                .gap(5.0)
+                .child(heading("Open repository", 24.0))
+                .child(label(
+                    "Choose a local Git repository or worktree.",
+                    14.0,
+                    400.0,
+                    MUTED,
+                )),
         )
-        .child(actions);
+        .child(
+            col()
+                .gap(6.0)
+                .child(label("Repository path", 13.0, 600.0, INK).a11y_hidden())
+                .child(
+                    row()
+                        .gap(8.0)
+                        .center_y()
+                        .child(
+                            TextInput::new(&s.path)
+                                .height(36.0)
+                                .label("Repository path")
+                                .placeholder("Enter a folder path")
+                                .on_edit(|s: &mut Desk| &mut s.path)
+                                .on_submit(|s: &mut Desk, _| s.open_input())
+                                .disabled(s.busy)
+                                .build(k)
+                                .grow(1.0)
+                                .min_w(0.0)
+                                .key("repo-path")
+                                .autofocus(),
+                        )
+                        .child(browse),
+                ),
+        );
     if !s.workspace.notice.is_empty() {
-        panel = panel.child(label(&s.workspace.notice, 13.0, 400.0, MUTED).wrap_anywhere());
+        panel = panel.child(label(&s.workspace.notice, 13.0, 500.0, REMOVED).wrap_anywhere());
     }
     col()
         .w_full()
         .h_full()
         .center()
         .fill(color(RAIL))
-        .child(panel)
+        .child(panel.child(actions))
 }
 
 fn sidebar(s: &Desk, k: &Kit) -> El {
@@ -136,63 +200,80 @@ fn sidebar(s: &Desk, k: &Kit) -> El {
         s.tab
     };
     let mut rail = col()
-        .w(148.0)
+        .w(156.0)
         .h_full()
-        .padding(8.0)
-        .gap(2.0)
-        .fill(color(RAIL));
+        .padding(10.0)
+        .gap(3.0)
+        .fill(color(RAIL))
+        .child(
+            row()
+                .h(40.0)
+                .px(10.0)
+                .center_y()
+                .child(label("GitDesk", 17.0, 700.0, INK)),
+        )
+        .child(divider())
+        .child(el().h(4.0));
     for (index, (title, tab)) in s.tabs().into_iter().enumerate() {
         if bare && matches!(tab, Tab::Changes | Tab::Stashes) {
             continue;
         }
         if tab == Tab::Settings {
-            rail = rail.child(divider());
+            rail = rail.child(el().h(2.0)).child(divider()).child(el().h(2.0));
         }
         let active = tab == current || matches!((tab, current), (Tab::Diff(_), Tab::Diff(_)));
         let mut item = row()
             .key(format!("tab-{title}"))
-            .h(36.0)
-            .px(6.0)
-            .gap(7.0)
+            .h(34.0)
+            .px(8.0)
+            .gap(8.0)
             .center_y()
             .role("button")
             .label(title)
+            .description(if active { "Current view" } else { "" })
+            .disabled(s.busy)
             .help(title)
             .help_keys([super::PRIMARY_KEY, &(index + 1).to_string()])
             .focusable(!s.busy)
             .radius(5.0)
             .focus_ring(2.0, 0.0, color(ACCENT))
-            .hover(color(HOVER))
+            .hover(color(if active { SELECTED } else { HOVER }))
             .fill(if active {
                 color(SELECTED)
             } else {
                 Color::TRANSPARENT
             })
-            .child(el().w(3.0).h(16.0).radius(1.5).fill(if active {
+            .child(el().w(3.0).h(18.0).radius(1.5).fill(if active {
                 color(ACCENT)
             } else {
                 Color::TRANSPARENT
             }))
-            .child(label(
-                title,
-                15.0,
-                if active { 600.0 } else { 400.0 },
-                if active { INK } else { MUTED },
-            ));
+            .child(
+                label(
+                    title,
+                    14.0,
+                    if active { 650.0 } else { 500.0 },
+                    if active { ACCENT } else { INK },
+                )
+                .a11y_hidden(),
+            );
         if !s.busy {
             item = item.on_press(move |s: &mut Desk| s.select_tab(tab));
         }
         rail = rail.child(item);
     }
-    rail.child(el().grow(1.0)).child(divider()).child(
-        button("Open…")
-            .disabled(s.busy)
-            .on_press(Desk::show_opener)
-            .build(k)
-            .help("Open repository")
-            .help_keys([super::PRIMARY_KEY, "O"])
-            .key("change-repository"),
-    )
+    rail.child(el().grow(1.0))
+        .child(divider())
+        .child(el().h(3.0))
+        .child(
+            button("Open repository…")
+                .disabled(s.busy)
+                .on_press(Desk::show_opener)
+                .build(k)
+                .help("Open repository")
+                .help_keys([super::PRIMARY_KEY, "O"])
+                .key("change-repository"),
+        )
 }
 
 fn github(s: &Desk, k: &Kit) -> El {
@@ -363,7 +444,6 @@ fn settings(s: &Desk, k: &Kit) -> El {
         .grow(1.0)
         .min_h(0.0)
         .gap(8.0)
-        .child(label("Git settings", 20.0, 600.0, INK))
         .child(scopes)
         .child(divider())
         .child(scroll_list(list))
@@ -386,11 +466,7 @@ fn change_name(c: &Change, staged: bool) -> &'static str {
 }
 
 fn changes(s: &Desk, data: &Snapshot, k: &Kit, layers: &mut Vec<El>) -> El {
-    let mut checkbox_kit = k.clone();
-    checkbox_kit.c.border_weak = color("#707d88");
-    checkbox_kit.c.border_hover = color(MUTED);
-    checkbox_kit.c.std_border = color(ACCENT);
-    let mut files = col().gap(8.0);
+    let mut files = col().gap(12.0);
     for staged in [false, true] {
         let selection = &s.selected_changes[usize::from(staged)];
         let section: Vec<_> = data
@@ -409,69 +485,84 @@ fn changes(s: &Desk, data: &Snapshot, k: &Kit, layers: &mut Vec<El>) -> El {
         let all = count > 0 && count == paths.len();
         let mixed = count > 0 && !all;
         let action = if staged { "Unstage" } else { "Stage" };
-        let mut group = col().child(
-            row()
-                .h(32.0)
-                .px(6.0)
-                .center_y()
-                .gap(10.0)
-                .fill(color(HOVER))
-                .child(
-                    Checkbox::new(all)
-                        .label(format!("Select all {} files", name.to_lowercase()))
-                        .hide_label()
-                        .indeterminate(mixed)
-                        .icon(if mixed { k.glyph.dash } else { k.glyph.check })
-                        .disabled(s.busy || paths.is_empty())
-                        .on_toggle(move |s: &mut Desk| {
-                            let selection = &mut s.selected_changes[usize::from(staged)];
-                            selection.clear();
-                            if !all {
-                                selection.extend(paths.iter().cloned());
-                            }
-                        })
-                        .build(&checkbox_kit)
-                        .w(24.0)
-                        .h(26.0)
-                        .key(format!("select-all-{action}")),
-                )
-                .child(label(name, 15.0, 600.0, INK))
-                .child(label(section.len().to_string(), 12.0, 500.0, MUTED))
-                .child(el().grow(1.0))
-                .child(label(
-                    if count == 0 {
-                        String::new()
-                    } else {
-                        format!("{count} selected")
-                    },
-                    12.0,
-                    500.0,
-                    MUTED,
-                ))
-                .child(
-                    command(
-                        k,
-                        &format!("{action} selected"),
-                        if staged {
-                            Action::Unstage(selected, data.has_head)
-                        } else {
-                            Action::Stage(selected)
-                        },
-                        s.busy || count == 0,
+        let mut group = col()
+            .clip_rounded(8.0)
+            .border(1.0, color(RULE))
+            .border_layout()
+            .child(
+                row()
+                    .h(40.0)
+                    .px(12.0)
+                    .center_y()
+                    .gap(10.0)
+                    .fill(color(RAIL))
+                    .child(
+                        Checkbox::new(all)
+                            .label(format!("Select all {} files", name.to_lowercase()))
+                            .hide_label()
+                            .indeterminate(mixed)
+                            .icon(if mixed { k.glyph.dash } else { k.glyph.check })
+                            .disabled(s.busy || paths.is_empty())
+                            .on_toggle(move |s: &mut Desk| {
+                                let selection = &mut s.selected_changes[usize::from(staged)];
+                                selection.clear();
+                                if !all {
+                                    selection.extend(paths.iter().cloned());
+                                }
+                            })
+                            .build(k)
+                            .w(24.0)
+                            .h(26.0)
+                            .key(format!("select-all-{action}")),
                     )
-                    .w(140.0)
-                    .key(format!("{action}-selected")),
-                ),
-        );
+                    .child(label(name, 14.0, 650.0, INK))
+                    .child(
+                        row()
+                            .h(21.0)
+                            .px(7.0)
+                            .center_y()
+                            .radius(5.0)
+                            .fill(color(HOVER))
+                            .child(label(section.len().to_string(), 12.0, 600.0, MUTED)),
+                    )
+                    .child(el().grow(1.0))
+                    .child(label(
+                        if count == 0 {
+                            String::new()
+                        } else {
+                            format!("{count} selected")
+                        },
+                        12.0,
+                        500.0,
+                        MUTED,
+                    ))
+                    .child(
+                        command(
+                            k,
+                            &format!("{action} selected"),
+                            if staged {
+                                Action::Unstage(selected, data.has_head)
+                            } else {
+                                Action::Stage(selected)
+                            },
+                            s.busy || count == 0,
+                        )
+                        .w(140.0)
+                        .key(format!("{action}-selected")),
+                    ),
+            );
         if section.is_empty() {
             let hint = if staged {
                 "No changes staged."
             } else {
                 "Working tree is clean."
             };
-            group = group
-                .child(divider())
-                .child(col().padding(10.0).child(label(hint, 13.0, 400.0, MUTED)));
+            group = group.child(divider()).child(
+                col()
+                    .px(14.0)
+                    .py(10.0)
+                    .child(label(hint, 13.0, 400.0, MUTED)),
+            );
         }
         for c in section {
             let kind = change_name(c, staged);
@@ -480,19 +571,17 @@ fn changes(s: &Desk, data: &Snapshot, k: &Kit, layers: &mut Vec<El>) -> El {
             } else {
                 Action::Stage(vec![c.path.clone()])
             };
-            let ink = if staged {
-                ADDED
-            } else if c.conflict() {
-                REMOVED
-            } else {
-                MUTED
+            let ink = match kind {
+                "Conflict" | "Deleted" => REMOVED,
+                "Added" => ADDED,
+                _ => MUTED,
             };
             let checked = selection.contains(&c.path);
             let path = c.path.clone();
             group = group.child(divider()).child(
                 row()
-                    .h(28.0)
-                    .px(6.0)
+                    .h(38.0)
+                    .px(12.0)
                     .center_y()
                     .gap(10.0)
                     .fill(if checked {
@@ -515,7 +604,7 @@ fn changes(s: &Desk, data: &Snapshot, k: &Kit, layers: &mut Vec<El>) -> El {
                                     selection.insert(path.clone());
                                 }
                             })
-                            .build(&checkbox_kit)
+                            .build(k)
                             .w(24.0)
                             .h(26.0)
                             .key(format!(
@@ -584,23 +673,32 @@ fn changes(s: &Desk, data: &Snapshot, k: &Kit, layers: &mut Vec<El>) -> El {
     .into_iter()
     .filter_map(|(enabled, label)| enabled.then_some(label))
     .collect();
-    let mut panel = col()
+    let mut composer = col()
+        .px(12.0)
+        .py(10.0)
+        .gap(7.0)
+        .radius(8.0)
+        .border(1.0, color(RULE))
+        .fill(color(RAIL))
+        .child(label("Commit message", 13.0, 650.0, INK).a11y_hidden());
+    if !selected.is_empty() {
+        composer = composer.child(label(selected.join(" · "), 12.0, 500.0, ACCENT));
+    }
+    col()
         .min_h(0.0)
         .grow(1.0)
-        .gap(8.0)
+        .gap(12.0)
         .child(scroll_list(files))
-        .child(divider());
-    if !selected.is_empty() {
-        panel = panel.child(label(selected.join(" · "), 12.0, 500.0, ACCENT));
-    }
-    panel.child(
-        row()
-            .gap(8.0)
-            .center_y()
-            .child(input)
-            .child(commit)
-            .child(more),
-    )
+        .child(
+            composer.child(
+                row()
+                    .gap(8.0)
+                    .center_y()
+                    .child(input)
+                    .child(commit)
+                    .child(more),
+            ),
+        )
 }
 
 fn commit_menu(s: &Desk, data: &Snapshot, k: &Kit, layers: &mut Vec<El>) -> El {
@@ -795,6 +893,7 @@ fn detail(s: &Desk, data: &Snapshot, k: &Kit, layers: &mut Vec<El>) -> El {
                                 .disabled(s.busy || s.branch_name.text.trim().is_empty())
                                 .on_press(Desk::create_branch)
                                 .build(k)
+                                .h(36.0)
                                 .key("create-branch"),
                         ),
                 );
@@ -858,7 +957,7 @@ fn detail(s: &Desk, data: &Snapshot, k: &Kit, layers: &mut Vec<El>) -> El {
                     .center_y()
                     .child(label(branch, 14.0, 500.0, INK).grow(1.0).truncate());
                 if current {
-                    line = line.child(label("Current", 12.0, 500.0, ACCENT));
+                    line = line.child(branch_badge("Current"));
                 }
                 line = line.child(branch_menu(s, data, branch, k, layers));
                 body = body.child(line).child(divider());
@@ -956,55 +1055,77 @@ fn branch_menu(s: &Desk, data: &Snapshot, branch: &str, k: &Kit, layers: &mut Ve
     menu.build(k, layers)
 }
 
+fn repository_header(s: &Desk, k: &Kit) -> El {
+    let path = s.workspace.selected.as_deref();
+    let title = path
+        .and_then(std::path::Path::file_name)
+        .map_or_else(|| "Repository".into(), |name| name.to_string_lossy());
+    let mut identity = row()
+        .gap(8.0)
+        .center_y()
+        .child(label(title, 19.0, 650.0, INK).min_w(0.0).truncate());
+    if let Some(data) = &s.workspace.snapshot {
+        identity = identity.child(branch_badge(&data.branch));
+    }
+    let mut metadata = col().gap(4.0).grow(1.0).min_w(0.0).child(identity);
+    if let Some(path) = path {
+        metadata = metadata.child(
+            label(path.display().to_string(), 12.0, 400.0, MUTED)
+                .truncate_middle()
+                .selectable(true),
+        );
+    }
+    let mut toolbar = row().center_y().gap(6.0);
+    if let Some(data) = &s.workspace.snapshot {
+        toolbar = toolbar.child(command(k, "Fetch", Action::Fetch, s.busy));
+        if !data.bare {
+            toolbar = toolbar.child(command(k, "Pull", Action::Pull, s.busy));
+        }
+        toolbar = toolbar.child(command(k, "Push", Action::Push, s.busy));
+    }
+    let refresh = button("Refresh")
+        .variant(ButtonVariant::Ghost)
+        .disabled(s.busy)
+        .on_press(Desk::refresh)
+        .build(k)
+        .help("Refresh")
+        .help_keys(["F5"])
+        .key("refresh");
+    row()
+        .center_y()
+        .px(20.0)
+        .py(13.0)
+        .gap(16.0)
+        .child(metadata)
+        .child(toolbar.child(refresh))
+}
+
 pub fn view(s: &Desk, _: &mut Cx<Desk>) -> El {
-    let mut k = Kit::neutral(true);
-    k.c.border_focus = color(ACCENT);
+    let k = light_kit();
     if s.opening {
         return opener(s, &k);
     }
     let w = &s.workspace;
     let mut layers = Vec::new();
-    let title = w
-        .selected
-        .as_ref()
-        .map(|p| p.display().to_string())
-        .unwrap_or_default();
-    let refresh = button("Refresh")
-        .disabled(s.busy)
-        .on_press(Desk::refresh)
-        .build(&k)
-        .help("Refresh")
-        .help_keys(["F5"])
-        .key("refresh");
-    let mut toolbar = row().center_y().gap(6.0).child(
-        label(title, 16.0, 600.0, INK)
-            .grow(1.0)
-            .min_w(0.0)
-            .truncate(),
-    );
-    if let Some(data) = &w.snapshot {
-        toolbar = toolbar.child(command(&k, "Fetch", Action::Fetch, s.busy));
-        if !data.bare {
-            toolbar = toolbar.child(command(&k, "Pull", Action::Pull, s.busy));
-        }
-        toolbar = toolbar.child(command(&k, "Push", Action::Push, s.busy));
-    }
-    if let Some(data) = &w.snapshot {
-        toolbar = toolbar.child(
-            label(&data.branch, 13.0, 500.0, ACCENT)
-                .max_w(140.0)
-                .truncate(),
-        );
-    }
-    let header = col().child(toolbar.child(refresh));
+    let bare = w.snapshot.as_ref().is_some_and(|data| data.bare);
+    let title = match s.tab {
+        Tab::Changes if bare => "History",
+        Tab::Changes => "Changes",
+        Tab::Diff(_) => "Diff",
+        Tab::History => "History",
+        Tab::Branches => "Branches",
+        Tab::Stashes => "Stashes",
+        Tab::Settings => "Git settings",
+        Tab::GitHub => "GitHub",
+        Tab::Terminal => "Terminal",
+    };
     let mut main = col()
         .grow(1.0)
-        .min_w(0.0)
-        .h_full()
-        .padding(12.0)
-        .gap(10.0)
-        .child(header)
-        .child(divider());
+        .min_h(0.0)
+        .px(20.0)
+        .py(16.0)
+        .gap(12.0)
+        .child(heading(title, 24.0));
     if let Some(data) = &w.snapshot {
         main = main.child(detail(s, data, &k, &mut layers));
     } else {
@@ -1022,9 +1143,14 @@ pub fn view(s: &Desk, _: &mut Cx<Desk>) -> El {
         }
     }
     if !w.notice.is_empty() {
-        main = main.child(divider()).child(
+        main = main.child(
             col()
-                .max_h(68.0)
+                .max_h(76.0)
+                .px(10.0)
+                .py(5.0)
+                .radius(6.0)
+                .border(1.0, color(RULE))
+                .fill(color(RAIL))
                 .scroll(ScrollSpec {
                     stick_bottom: false,
                 })
@@ -1041,6 +1167,14 @@ pub fn view(s: &Desk, _: &mut Cx<Desk>) -> El {
         .fill(color(PAGE))
         .child(sidebar(s, &k))
         .child(el().w(1.0).h_full().fill(color(RULE)))
-        .child(main);
+        .child(
+            col()
+                .grow(1.0)
+                .min_w(0.0)
+                .h_full()
+                .child(repository_header(s, &k))
+                .child(divider())
+                .child(main),
+        );
     root(body, layers)
 }

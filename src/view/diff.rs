@@ -1,5 +1,6 @@
 use super::{
-    ACCENT, ADDED, Desk, INK, MUTED, REMOVED, RULE, button, color, divider, label, scroll_list,
+    ACCENT, ADDED, Desk, INK, MUTED, PAGE, RAIL, REMOVED, RULE, SELECTED, button, color, divider,
+    label, scroll_list,
 };
 use rune::{El, Family, TextStyle, col, row, text};
 use rune_kit::Kit;
@@ -151,7 +152,7 @@ fn line_view(line: Line<'_>) -> El {
         Line::Hunk(header) => col()
             .px(10.0)
             .py(3.0)
-            .fill(color("#222c33"))
+            .fill(color(SELECTED))
             .child(mono(header, ACCENT).wrap_anywhere().selectable(true)),
         Line::Note(note) => col()
             .px(10.0)
@@ -164,9 +165,9 @@ fn line_view(line: Line<'_>) -> El {
             code,
         } => {
             let (ink, background) = match sign {
-                '+' => (ADDED, "#1e3028"),
-                '-' => (REMOVED, "#35252a"),
-                _ => (INK, "#171b20"),
+                '+' => (ADDED, "#e9f7ee"),
+                '-' => (REMOVED, "#ffedef"),
+                _ => (INK, PAGE),
             };
             row()
                 .items_start()
@@ -194,10 +195,10 @@ fn file_view(file: File<'_>) -> El {
     );
     let mut header = row()
         .px(10.0)
-        .py(6.0)
+        .py(9.0)
         .gap(8.0)
         .center_y()
-        .fill(color("#252a30"))
+        .fill(color(RAIL))
         .child(
             label(path, 13.0, 600.0, INK)
                 .grow(1.0)
@@ -209,8 +210,9 @@ fn file_view(file: File<'_>) -> El {
         header = header.child(label(status, 12.0, 500.0, MUTED));
     }
     let mut body = col()
-        .clip_rounded(5.0)
+        .clip_rounded(8.0)
         .border(1.0, color(RULE))
+        .border_layout()
         .child(header)
         .child(divider());
     for line in file.lines {

@@ -777,7 +777,7 @@ fn main() {
         poll: Some(|s: &mut Desk, _, _| s.poll()),
         on_key: Some(Desk::key),
         ..AppSpec::new(
-            "Git",
+            "GitDesk",
             (1000.0, 640.0),
             || Desk::new(rune::extra_args().first().map(PathBuf::from)),
             view::view,

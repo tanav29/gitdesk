@@ -1,13 +1,13 @@
 use super::Desk;
-use crate::view::button;
+use crate::view::{ACCENT, INK, MUTED, RULE, button, color, label};
 use rune::{Color, El, Family, Key, TextStyle, col, el, row, text};
-use rune_kit::Kit;
+use rune_kit::{ButtonVariant, Kit};
 
 const CELL: f32 = 8.0;
 const LINE: f32 = 18.0;
 const INSET: f32 = 8.0;
-const BACKGROUND: u32 = 0x101215;
-const FOREGROUND: u32 = 0xe5eaee;
+const BACKGROUND: u32 = 0xf8fafd;
+const FOREGROUND: u32 = 0x172437;
 
 fn rgb(value: u32) -> Color {
     let channel = |shift| rune::color::srgb_decode(((value >> shift) & 255u32) as f32 / 255.0);
@@ -23,8 +23,8 @@ fn palette(color: vt100::Color, fallback: u32) -> Color {
         vt100::Color::Default => fallback,
         vt100::Color::Rgb(r, g, b) => u32::from_be_bytes([0, r, g, b]),
         vt100::Color::Idx(i @ 0..=15) => [
-            0x252934, 0xe18b8c, 0x91c6a1, 0xe0c182, 0x94b6e8, 0xcda6e1, 0x88cbd2, 0xe3e8ee,
-            0x788296, 0xffa7aa, 0xa6e2b4, 0xf9d797, 0xabccff, 0xe0b8f5, 0xa0e3e9, 0xffffff,
+            0x172437, 0x9e2932, 0x1e6240, 0x78530c, 0x2448a6, 0x793f8c, 0x16606d, 0x4e5a6d,
+            0x5e6b7e, 0xb13d41, 0x2a754c, 0x86601b, 0x315ab8, 0x884da2, 0x19717e, 0x59667a,
         ][i as usize],
         vt100::Color::Idx(i @ 16..=231) => {
             let cube = [0, 95, 135, 175, 215, 255];
@@ -108,7 +108,7 @@ fn grid(screen: &vt100::Screen, mut panel: El) -> El {
                 INSET + LINE * f32::from(y) + LINE - 2.0,
             )
             .size(CELL, 2.0)
-            .fill(Color::WHITE),
+            .fill(rgb(FOREGROUND)),
         );
     }
     panel
@@ -129,20 +129,23 @@ fn paste_from_clipboard(s: &mut Desk, tx: &mut rune::Tx) {
 
 pub fn view(s: &Desk, k: &Kit) -> El {
     let Some(shell) = s.shell() else {
-        return button("Start terminal")
-            .disabled(s.busy)
-            .on_press(|s: &mut Desk| s.start_shell())
-            .build(k);
+        return row().child(
+            button("Start terminal")
+                .variant(ButtonVariant::Contrast)
+                .disabled(s.busy)
+                .on_press(|s: &mut Desk| s.start_shell())
+                .build(k),
+        );
+    };
+    let title = if shell.title == "Terminal" {
+        el()
+    } else {
+        label(&shell.title, 14.0, 600.0, INK).min_w(0.0).truncate()
     };
     let mut bar = row()
         .gap(8.0)
         .center_y()
-        .child(
-            text(shell.title.clone())
-                .font(TextStyle::new(15.0, 600.0))
-                .color(rgb(FOREGROUND))
-                .grow(1.0),
-        )
+        .child(title.grow(1.0))
         .child(
             button("Paste")
                 .disabled(shell.ended.is_some())
@@ -162,13 +165,11 @@ pub fn view(s: &Desk, k: &Kit) -> El {
                 .build(k),
         );
     if let Some(status) = &shell.ended {
-        bar = bar
-            .child(text(status.clone()).color(rgb(FOREGROUND)))
-            .child(
-                button("Restart")
-                    .on_press(|s: &mut Desk| s.start_shell())
-                    .build(k),
-            );
+        bar = bar.child(label(status, 13.0, 400.0, MUTED)).child(
+            button("Restart")
+                .on_press(|s: &mut Desk| s.start_shell())
+                .build(k),
+        );
     }
     let panel = el()
         .key("terminal-screen")
@@ -181,7 +182,8 @@ pub fn view(s: &Desk, k: &Kit) -> El {
         .min_h(0.0)
         .clip_rounded(6.0)
         .fill(rgb(BACKGROUND))
-        .focus_ring(2.0, 0.0, rgb(0x8fd8cf))
+        .border(1.0, color(RULE))
+        .focus_ring(2.0, 0.0, color(ACCENT))
         .on_layout(|s: &mut Desk, [_, _, w, h]| {
             if let Some(t) = s.shell() {
                 t.resize(
