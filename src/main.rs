@@ -1,4 +1,5 @@
 mod git;
+mod github;
 mod terminal;
 mod terminal_view;
 #[cfg(test)]
@@ -25,19 +26,8 @@ enum Tab {
     History,
     Branches,
     Settings,
-    Commands,
     GitHub,
     Terminal,
-}
-
-impl Tab {
-    fn command_program(self) -> Option<&'static str> {
-        match self {
-            Self::Commands => Some("git"),
-            Self::GitHub => Some("gh"),
-            _ => None,
-        }
-    }
 }
 
 #[derive(Default)]
@@ -66,7 +56,7 @@ struct BranchComparison {
 enum Update {
     Opened(git::Result<(PathBuf, Snapshot)>),
     Settings(git::Result<Entries>, git::Result<()>),
-    Commands(git::Result<Vec<String>>),
+    GitHub(git::Result<Vec<github::Entry>>),
     Terminal(git::Result<Terminal>),
     Repository {
         path: PathBuf,
@@ -88,10 +78,9 @@ struct Desk {
     opening: bool,
     path: TextEdit,
     config: ConfigForm,
-    command: TextEdit,
-    github_command: TextEdit,
-    catalog: Vec<String>,
-    sessions: HashMap<(PathBuf, Tab), Terminal>,
+    github_section: github::Section,
+    github_entries: Vec<github::Entry>,
+    shells: HashMap<PathBuf, Terminal>,
     waker: Option<rune::Waker>,
     task: Latest<Update>,
     busy: bool,
@@ -104,10 +93,9 @@ impl Desk {
             opening: true,
             path: TextEdit::new(""),
             config: ConfigForm::default(),
-            command: TextEdit::new(""),
-            github_command: TextEdit::new(""),
-            catalog: Vec::new(),
-            sessions: HashMap::new(),
+            github_section: github::Section::default(),
+            github_entries: Vec::new(),
+            shells: HashMap::new(),
             waker: None,
             tab: Tab::Changes,
             draft: TextEdit::new(""),
@@ -150,60 +138,17 @@ impl Desk {
     }
 
     fn shell(&self) -> Option<&Terminal> {
-        self.sessions.get(&self.session_key()?)
+        self.shells.get(self.workspace.selected.as_ref()?)
     }
 
-    fn session_key(&self) -> Option<(PathBuf, Tab)> {
-        self.workspace.selected.clone().map(|path| (path, self.tab))
-    }
-
-    fn command_input(&self) -> &TextEdit {
-        if self.tab == Tab::GitHub {
-            &self.github_command
-        } else {
-            &self.command
-        }
-    }
-
-    fn command_input_mut(&mut self) -> &mut TextEdit {
-        if self.tab == Tab::GitHub {
-            &mut self.github_command
-        } else {
-            &mut self.command
-        }
-    }
-
-    fn finish_command(&mut self) {
-        if let Some(key) = self.session_key() {
-            self.sessions.remove(&key);
-        }
-        self.select_tab(self.tab);
-    }
-
-    fn run_command(&mut self) {
+    fn load_github(&mut self, section: github::Section) {
         let Some(path) = self.workspace.selected.clone() else {
             return;
         };
-        let Some(program) = self.tab.command_program() else {
-            return;
-        };
-        if self.shell().is_some() {
-            return;
-        }
-        let args = match shell_words::split(&self.command_input().text) {
-            Ok(args) if !args.is_empty() => args,
-            _ => {
-                self.workspace.notice =
-                    format!("Enter {program} arguments and close any quoted strings.");
-                return;
-            }
-        };
-        let wake = self
-            .waker
-            .clone()
-            .unwrap_or_else(|| std::sync::Arc::new(|| {}));
-        self.start(&format!("Starting {program}…"), move || {
-            Update::Terminal(Terminal::command(&path, wake, program, args))
+        self.github_section = section;
+        self.github_entries.clear();
+        self.start("Loading GitHub…", move || {
+            Update::GitHub(github::list(&path, section))
         });
     }
 
@@ -277,16 +222,8 @@ impl Desk {
         self.comparison.picker = None;
         if tab == Tab::Terminal {
             self.start_shell();
-        } else if tab == Tab::Commands {
-            if self.shell().is_none()
-                && let Some(path) = self.workspace.selected.clone()
-            {
-                self.start("Loading Git commands…", move || {
-                    Update::Commands(git::commands(&path))
-                });
-            }
         } else if tab == Tab::GitHub {
-            self.workspace.notice.clear();
+            self.load_github(self.github_section);
         } else if tab == Tab::Settings {
             self.settings(self.config.scope, None);
         } else if !matches!(tab, Tab::Diff(_))
@@ -339,12 +276,14 @@ impl Desk {
 
     fn poll(&mut self) -> bool {
         let Some(update) = self.task.take() else {
-            if self.opening {
+            if self.opening || self.tab != Tab::Terminal {
                 return false;
             }
             return self
-                .session_key()
-                .and_then(|key| self.sessions.get_mut(&key))
+                .workspace
+                .selected
+                .as_ref()
+                .and_then(|path| self.shells.get_mut(path))
                 .is_some_and(Terminal::poll);
         };
         self.busy = false;
@@ -359,9 +298,8 @@ impl Desk {
                     };
                     self.opening = false;
                     self.config = ConfigForm::default();
-                    self.command = TextEdit::new("");
-                    self.github_command = TextEdit::new("");
-                    self.catalog.clear();
+                    self.github_section = github::Section::default();
+                    self.github_entries.clear();
                     self.comparison = BranchComparison::default();
                     self.tab = Tab::Changes;
                 }
@@ -382,17 +320,17 @@ impl Desk {
                     }
                 }
             }
-            Update::Commands(result) => {
+            Update::GitHub(result) => {
                 self.workspace.notice.clear();
-                self.catalog = result.unwrap_or_else(|error| {
+                self.github_entries = result.unwrap_or_else(|error| {
                     self.workspace.notice = error;
                     Vec::new()
                 });
             }
             Update::Terminal(result) => match result {
                 Ok(shell) => {
-                    if let Some(key) = self.session_key() {
-                        self.sessions.insert(key, shell);
+                    if let Some(path) = &self.workspace.selected {
+                        self.shells.insert(path.clone(), shell);
                     }
                     self.workspace.notice.clear();
                 }

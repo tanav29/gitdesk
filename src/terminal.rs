@@ -54,20 +54,6 @@ impl Terminal {
         Self::spawn(repo, wake, cmd, "Terminal".into())
     }
 
-    pub fn command(
-        repo: &Path,
-        wake: Waker,
-        program: &str,
-        args: Vec<String>,
-    ) -> Result<Self, String> {
-        let mut cmd = CommandBuilder::new(program);
-        let title = format!("{program} {}", args.first().map_or("", String::as_str));
-        cmd.args(args);
-        Self::spawn(repo, wake, cmd, title).map_err(|e| {
-            format!("Could not start {program}. Make sure it is installed and on PATH. {e}")
-        })
-    }
-
     fn spawn(
         repo: &Path,
         wake: Waker,

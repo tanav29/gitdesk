@@ -176,8 +176,7 @@ fn sidebar(s: &Desk, k: &Kit) -> El {
         ("History", Tab::History),
         ("Branches", Tab::Branches),
         ("Settings", Tab::Settings),
-        ("Commands", Tab::Commands),
-        ("GitHub CLI", Tab::GitHub),
+        ("GitHub", Tab::GitHub),
         ("Terminal", Tab::Terminal),
     ] {
         if bare && tab == Tab::Changes {
@@ -228,95 +227,76 @@ fn sidebar(s: &Desk, k: &Kit) -> El {
     )
 }
 
-fn commands(s: &Desk, k: &Kit) -> El {
-    if s.shell().is_some() {
-        return crate::terminal_view::view(s, k);
-    }
-    let github = s.tab == Tab::GitHub;
-    let program = s.tab.command_program().unwrap();
-    let args = s.command_input().text.trim_start();
-    let query = args.split_whitespace().next().unwrap_or("");
-    let mut list = col().gap(2.0);
-    let shortcuts = [
-        "auth",
-        "pr",
-        "issue",
-        "repo",
-        "run",
-        "workflow",
-        "release",
-        "api",
-        "alias",
-        "extension",
-    ];
-    let command_names: Vec<&str> = if github {
-        shortcuts.to_vec()
-    } else {
-        s.catalog.iter().map(String::as_str).collect()
-    };
-    for name in command_names.into_iter().filter(|n| n.contains(query)) {
-        let choice = name.to_owned();
-        list = list.child(
-            Button::new(name)
-                .variant(ButtonVariant::Ghost)
-                .disabled(s.busy)
-                .on_press_tx(move |s: &mut Desk, tx| {
-                    let prefix = format!("{} ", shell_words::quote(&choice));
-                    *s.command_input_mut() = rune::TextEdit::new(prefix);
-                    tx.focus("input", false);
+fn github(s: &Desk, k: &Kit) -> El {
+    let mut sections = row().gap(8.0);
+    for section in crate::github::Section::ALL {
+        sections = sections.child(
+            Button::new(section.label())
+                .variant(if section == s.github_section {
+                    ButtonVariant::Contrast
+                } else {
+                    ButtonVariant::Ghost
                 })
+                .disabled(s.busy)
+                .on_press(move |s: &mut Desk| s.load_github(section))
                 .build(k)
-                .key(format!("choose-{name}")),
+                .key(format!("github-{}", section.label())),
         );
     }
-    let input = TextInput::new(s.command_input())
-        .label(if github {
-            "GitHub CLI arguments"
-        } else {
-            "Git arguments"
-        })
-        .placeholder(if github { "pr list" } else { "status --short" })
-        .on_edit(|s: &mut Desk| s.command_input_mut())
-        .on_submit(|s: &mut Desk, _| s.run_command())
-        .disabled(s.busy)
-        .build(k)
-        .key("git-arguments")
-        .grow(1.0);
+
+    let mut list = col().gap(8.0);
+    if s.github_entries.is_empty() && !s.busy && s.workspace.notice.is_empty() {
+        list = list.child(label(s.github_section.empty(), 14.0, 400.0, MUTED));
+    }
+    for entry in &s.github_entries {
+        let title = entry.number.map_or_else(
+            || entry.title.clone(),
+            |number| format!("#{number}  {}", entry.title),
+        );
+        let mut text = col()
+            .grow(1.0)
+            .min_w(0.0)
+            .gap(3.0)
+            .child(label(title, 14.0, 500.0, INK).wrap_anywhere());
+        let status = entry.status();
+        let metadata = [
+            entry.workflow_name.as_deref(),
+            entry.head_branch.as_deref(),
+            status.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" · ");
+        if !metadata.is_empty() {
+            text = text.child(label(metadata, 12.0, 400.0, MUTED).wrap_anywhere());
+        }
+        let url = entry.url.clone();
+        list = list
+            .child(
+                row()
+                    .key(format!("github-entry-{}", entry.url))
+                    .gap(12.0)
+                    .center_y()
+                    .child(text)
+                    .child(
+                        Button::new("Open on GitHub")
+                            .on_press_tx(move |s: &mut Desk, tx| {
+                                if let Err(error) = tx.open_url(&url) {
+                                    s.workspace.notice = error.to_string();
+                                }
+                            })
+                            .build(k),
+                    ),
+            )
+            .child(divider());
+    }
+
     col()
         .grow(1.0)
         .min_h(0.0)
         .gap(12.0)
-        .child(label(
-            if github { "GitHub CLI" } else { "Git commands" },
-            20.0,
-            600.0,
-            INK,
-        ))
-        .child(
-            row()
-                .gap(8.0)
-                .center_y()
-                .child(label(program, 14.0, 600.0, INK))
-                .child(input)
-                .child(
-                    Button::new("Run")
-                        .variant(ButtonVariant::Contrast)
-                        .disabled(s.busy || args.is_empty())
-                        .on_press(|s: &mut Desk| s.run_command())
-                        .build(k)
-                        .key("run-command"),
-                ),
-        )
-        .child(label(
-            if github {
-                "Common commands"
-            } else {
-                "Installed commands and aliases"
-            },
-            13.0,
-            500.0,
-            MUTED,
-        ))
+        .child(sections)
         .child(divider())
         .child(scroll_list(list))
 }
@@ -586,7 +566,7 @@ fn detail(s: &Desk, data: &Snapshot, k: &Kit, layers: &mut Vec<El>) -> El {
     let mut body = col().gap(7.0);
     match s.tab {
         Tab::Settings => settings(s, k),
-        Tab::Commands | Tab::GitHub => commands(s, k),
+        Tab::GitHub => github(s, k),
         Tab::Terminal => crate::terminal_view::view(s, k),
         Tab::Changes if !data.bare => changes(s, data, k),
         Tab::Branches => {
@@ -736,8 +716,8 @@ pub fn view(s: &Desk, _: &mut Cx<Desk>) -> El {
         let hint = "Repository could not be read.";
         if s.tab == Tab::Settings {
             main = main.child(settings(s, &k));
-        } else if s.tab.command_program().is_some() {
-            main = main.child(commands(s, &k));
+        } else if s.tab == Tab::GitHub {
+            main = main.child(github(s, &k));
         } else if s.tab == Tab::Terminal {
             main = main.child(crate::terminal_view::view(s, &k));
         } else {

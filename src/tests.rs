@@ -236,7 +236,7 @@ fn compares_local_and_remote_branch_tips_without_switching_branches() {
 }
 
 #[test]
-fn settings_commands_and_interactive_git_use_the_open_repository() {
+fn settings_and_interactive_git_use_the_open_repository() {
     let tmp = tempfile::tempdir().unwrap();
     let repo = tmp.path().join("repository with spaces");
     init(&repo);
@@ -275,25 +275,6 @@ fn settings_commands_and_interactive_git_use_the_open_repository() {
     Action::Stage("sample.txt".into()).apply(&repo).unwrap();
     Action::Commit("first".into()).apply(&repo).unwrap();
     fs::write(repo.join("sample.txt"), "two\n").unwrap();
-    click(&mut rt, "tab-Commands");
-    assert!(rt.state.catalog.iter().any(|n| n == "make-topic"));
-    click(&mut rt, "git-arguments");
-    rt.paste("make-topic feature/cli");
-    settle(&mut rt);
-    click(&mut rt, "run-command");
-    await_terminal(&mut rt, |s| s.ended.is_some());
-    assert_eq!(
-        rt.state.shell().unwrap().ended.as_deref(),
-        Some("Exit code 0")
-    );
-    assert!(
-        git::snapshot(&repo)
-            .unwrap()
-            .branches
-            .contains(&"feature/cli".into())
-    );
-    click(&mut rt, "terminal-finished");
-
     click(&mut rt, "tab-Terminal");
     await_terminal(&mut rt, |s| s.screen(|sc| !sc.contents().trim().is_empty()));
     click(&mut rt, "terminal-screen");
@@ -329,23 +310,42 @@ fn settings_commands_and_interactive_git_use_the_open_repository() {
     }
     click(&mut rt, "tab-Changes");
     assert!(rt.state.workspace.snapshot.as_ref().unwrap().changes[0].staged());
+}
 
-    if Command::new("gh")
-        .arg("--version")
-        .output()
-        .is_ok_and(|out| out.status.success())
-    {
-        click(&mut rt, "tab-GitHub CLI");
-        click(&mut rt, "git-arguments");
-        rt.paste("--version");
-        settle(&mut rt);
-        click(&mut rt, "run-command");
-        await_terminal(&mut rt, |s| {
-            s.ended.as_deref() == Some("Exit code 0")
-                && s.screen(|screen| screen.contents().contains("gh version"))
-        });
-        click(&mut rt, "terminal-finished");
-        click(&mut rt, "tab-Commands");
-        assert_eq!(rt.state.command_input().text, "make-topic feature/cli");
+#[test]
+fn github_renders_pull_requests_and_workflow_status() {
+    let mut desk = Desk::new(None);
+    desk.opening = false;
+    desk.tab = Tab::GitHub;
+    let pull_requests = github::parse(
+        br#"[{"number":42,"title":"Add a feature","url":"https://github.com/example/repo/pull/42","isDraft":true}]"#,
+    )
+    .unwrap();
+    assert_eq!(pull_requests[0].number, Some(42));
+    assert_eq!(pull_requests[0].status().as_deref(), Some("Draft"));
+    let runs = github::parse(
+        br#"[{"displayTitle":"Build desktop app","url":"https://github.com/example/repo/actions/runs/42","workflowName":"Build","headBranch":"main","status":"completed","conclusion":"success"}]"#,
+    )
+    .unwrap();
+    assert_eq!(runs[0].title, "Build desktop app");
+    assert_eq!(runs[0].status().as_deref(), Some("success"));
+    desk.github_entries = pull_requests;
+
+    let mut rt = Runtime::new(
+        desk,
+        view::view,
+        (1120.0, 740.0),
+        Env {
+            system_dark: false,
+            scale: 1.0,
+        },
+    );
+    settle(&mut rt);
+    for key in ["github-Pull requests", "github-Issues", "github-Actions"] {
+        assert!(rt.find(key).is_some(), "Missing {key}");
     }
+    assert!(
+        rt.find("github-entry-https://github.com/example/repo/pull/42")
+            .is_some()
+    );
 }

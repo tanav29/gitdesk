@@ -73,14 +73,6 @@ fn output(repo: &Path, args: &[&str]) -> Result<String> {
         .to_owned())
 }
 
-pub fn commands(repo: &Path) -> Result<Vec<String>> {
-    let list = output(repo, &["--list-cmds=main,others,alias"])?;
-    let mut commands: Vec<_> = list.lines().map(str::to_owned).collect();
-    commands.sort();
-    commands.dedup();
-    Ok(commands)
-}
-
 #[derive(Debug)]
 pub struct Change {
     pub index: u8,

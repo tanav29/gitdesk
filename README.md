@@ -24,6 +24,6 @@ In **Diff → Compare branches**, choose a base and a comparison branch to view 
 
 **Settings** reads and edits Git configuration at local, global, worktree, and system scope, subject to Git’s permissions and repository configuration.
 
-**Commands** lists installed Git commands and aliases. Enter arguments after the displayed `git` prefix to run a command in the open repository. Quote paths that contain spaces. Use **Terminal** for native shell syntax, interactive Git commands, or Git workflows involving other programs. The shell starts in the repository directory. Gitdesk refreshes repository data when you return to Changes, Diff, History, or Branches.
+**GitHub** shows open pull requests, open issues, and recent Actions runs for the repository. Each result opens on GitHub. Install GitHub CLI on PATH and sign in with `gh auth login` to use these views.
 
-**GitHub CLI** runs `gh` in the open repository. With GitHub CLI installed on PATH, enter arguments such as `auth status`, `pr list`, or `run list`. Commands use your GitHub CLI configuration and can accept interactive input.
+**Terminal** starts a shell in the repository directory for any Git or GitHub CLI command.

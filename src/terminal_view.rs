@@ -159,20 +159,9 @@ pub fn view(s: &Desk, k: &Kit) -> El {
         );
     if let Some(status) = &shell.ended {
         bar = bar.child(text(status.clone())).child(
-            Button::new(if s.tab.command_program().is_some() {
-                "Back to commands"
-            } else {
-                "Restart"
-            })
-            .on_press(|s: &mut Desk| {
-                if s.tab.command_program().is_some() {
-                    s.finish_command();
-                } else {
-                    s.start_shell();
-                }
-            })
-            .build(k)
-            .key("terminal-finished"),
+            Button::new("Restart")
+                .on_press(|s: &mut Desk| s.start_shell())
+                .build(k),
         );
     }
     let panel = el()
@@ -198,14 +187,7 @@ pub fn view(s: &Desk, k: &Kit) -> El {
         .on_press_tx(|_: &mut Desk, tx| tx.focus("terminal-screen", false))
         .on_key(|s: &mut Desk, ev, tx| {
             if ev.mods.ctrl && ev.key == Key::Function(6) {
-                tx.focus(
-                    match s.tab {
-                        super::Tab::Commands => "tab-Commands",
-                        super::Tab::GitHub => "tab-GitHub CLI",
-                        _ => "tab-Terminal",
-                    },
-                    true,
-                );
+                tx.focus("tab-Terminal", true);
                 return true;
             }
             if (ev.mods.logo || ev.mods.shift) && ev.key == Key::Command('v') {
