@@ -349,3 +349,52 @@ fn github_renders_pull_requests_and_workflow_status() {
             .is_some()
     );
 }
+
+#[test]
+fn github_keeps_the_comment_draft_when_inspecting_changed_files() {
+    let mut desk = Desk::new(None);
+    desk.opening = false;
+    desk.tab = Tab::GitHub;
+    desk.github_entries = github::parse(
+        br#"[{"number":42,"title":"Add a feature","url":"https://github.com/example/repo/pull/42"}]"#,
+    )
+    .unwrap();
+    let mut rt = Runtime::new(
+        desk,
+        view::view,
+        MIN_WINDOW_SIZE,
+        Env {
+            system_dark: false,
+            scale: 1.0,
+        },
+    );
+    settle(&mut rt);
+    click(&mut rt, "github-details-42");
+    rt.update(|s, _| {
+        let thread = s.github_thread.as_mut().unwrap();
+        thread.conversation = Some(serde_json::from_str(
+            r#"{"author":{"login":"octocat"},"body":"Description","comments":[{"author":null,"body":"A comment"}]}"#,
+        ).unwrap());
+        thread.patch = Some(
+            "diff --git a/file.txt b/file.txt\n@@ -1 +1 @@\n-before\n+after\n".into(),
+        );
+    });
+    settle(&mut rt);
+    click(&mut rt, "github-comment-body");
+    rt.paste("First line\nSecond line");
+    settle(&mut rt);
+    click(&mut rt, "Files changed");
+    assert!(rt.find("github-changed-files").is_some());
+    assert!(rt.find("github-comment-body").is_none());
+    click(&mut rt, "Conversation");
+    assert_eq!(
+        rt.state.github_thread.as_ref().unwrap().draft.text,
+        "First line\nSecond line"
+    );
+    rt.update(|s, _| s.github_section = github::Section::Issues);
+    settle(&mut rt);
+    assert!(rt.find("Files changed").is_none());
+    assert!(rt.find("github-comment-body").is_some());
+    click(&mut rt, "github-back");
+    assert!(rt.find("github-details-42").is_some());
+}

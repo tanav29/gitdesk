@@ -24,6 +24,6 @@ In **Diff → Compare branches**, choose a base and a comparison branch to view 
 
 **Settings** reads and edits Git configuration at local, global, worktree, and system scope, subject to Git’s permissions and repository configuration.
 
-**GitHub** shows open pull requests, open issues, and recent Actions runs for the repository. Each result opens on GitHub. Install GitHub CLI on PATH and sign in with `gh auth login` to use these views.
+**GitHub** shows open pull requests, open issues, and recent Actions runs for the repository. Choose **View details** on a pull request or issue to read its description and comments or post a comment. On a pull request, **Files changed** shows the diff with line numbers. **Open on GitHub** opens the original item in your browser. Install GitHub CLI on PATH and sign in with `gh auth login` to use these views.
 
 **Terminal** starts a shell in the repository directory for any Git or GitHub CLI command.

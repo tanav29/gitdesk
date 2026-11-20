@@ -1,6 +1,10 @@
 use crate::git::{REPO_ENV, Result};
 use serde::Deserialize;
-use std::{io::ErrorKind, path::Path, process::Command};
+use std::{
+    io::{self, ErrorKind, Write},
+    path::Path,
+    process::{Command, Output, Stdio},
+};
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub enum Section {
@@ -69,8 +73,25 @@ impl Entry {
     }
 }
 
-pub fn list(repo: &Path, section: Section) -> Result<Vec<Entry>> {
-    let (group, fields) = section.query();
+#[derive(Deserialize)]
+pub struct Conversation {
+    pub author: Option<Author>,
+    pub body: String,
+    pub comments: Vec<Comment>,
+}
+
+#[derive(Deserialize)]
+pub struct Author {
+    pub login: String,
+}
+
+#[derive(Deserialize)]
+pub struct Comment {
+    pub author: Option<Author>,
+    pub body: String,
+}
+
+fn command(repo: &Path) -> Command {
     let mut gh = Command::new("gh");
     #[cfg(windows)]
     {
@@ -79,20 +100,23 @@ pub fn list(repo: &Path, section: Section) -> Result<Vec<Entry>> {
     }
     gh.current_dir(repo)
         .env("GH_PROMPT_DISABLED", "1")
+        .env_remove("GH_FORCE_TTY")
         .env_remove("GH_REPO");
     for key in REPO_ENV {
         gh.env_remove(key);
     }
-    let output = gh
-        .args([group, "list", "--limit", "25", "--json", fields])
-        .output()
-        .map_err(|error| {
-            if error.kind() == ErrorKind::NotFound {
-                "Install GitHub CLI (gh) and add it to PATH to use this view.".into()
-            } else {
-                format!("Could not start GitHub CLI. {error}")
-            }
-        })?;
+    gh
+}
+
+fn start_error(error: io::Error) -> String {
+    if error.kind() == ErrorKind::NotFound {
+        "Install GitHub CLI (gh) and add it to PATH to use this view.".into()
+    } else {
+        format!("Could not start GitHub CLI. {error}")
+    }
+}
+
+fn stdout(output: Output) -> Result<Vec<u8>> {
     if !output.status.success() {
         let message = String::from_utf8_lossy(&output.stderr);
         let message = message.trim();
@@ -102,7 +126,51 @@ pub fn list(repo: &Path, section: Section) -> Result<Vec<Entry>> {
             message.to_owned()
         });
     }
-    parse(&output.stdout)
+    Ok(output.stdout)
+}
+
+fn read(repo: &Path, args: &[&str]) -> Result<Vec<u8>> {
+    stdout(command(repo).args(args).output().map_err(start_error)?)
+}
+
+pub fn list(repo: &Path, section: Section) -> Result<Vec<Entry>> {
+    let (group, fields) = section.query();
+    parse(&read(
+        repo,
+        &[group, "list", "--limit", "25", "--json", fields],
+    )?)
+}
+
+pub fn conversation(repo: &Path, section: Section, url: &str) -> Result<Conversation> {
+    let (group, _) = section.query();
+    let output = read(
+        repo,
+        &[group, "view", "--json", "author,body,comments", "--", url],
+    )?;
+    serde_json::from_slice(&output)
+        .map_err(|error| format!("Could not read the GitHub conversation. {error}"))
+}
+
+pub fn diff(repo: &Path, url: &str) -> Result<String> {
+    read(repo, &["pr", "diff", "--color=never", "--", url])
+        .map(|output| String::from_utf8_lossy(&output).into_owned())
+}
+
+pub fn comment(repo: &Path, section: Section, url: &str, body: &str) -> Result<()> {
+    let (group, _) = section.query();
+    let mut child = command(repo)
+        .args([group, "comment", "--body-file", "-", "--", url])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(start_error)?;
+    let written = child.stdin.take().unwrap().write_all(body.as_bytes());
+    let output = child
+        .wait_with_output()
+        .map_err(|error| format!("Could not read the comment submission result. {error}"))?;
+    stdout(output)?;
+    written.map_err(|error| format!("Could not send the comment text. {error}"))
 }
 
 pub fn parse(output: &[u8]) -> Result<Vec<Entry>> {

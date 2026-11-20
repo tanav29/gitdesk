@@ -6,6 +6,7 @@ use rune_kit::{
 };
 
 mod diff;
+mod github_thread;
 
 const PAGE: &str = "#171a1e";
 const RAIL: &str = "#121417";
@@ -248,6 +249,9 @@ fn sidebar(s: &Desk, k: &Kit) -> El {
 }
 
 fn github(s: &Desk, k: &Kit) -> El {
+    if let Some(thread) = &s.github_thread {
+        return github_thread::view(s, thread, k);
+    }
     let mut sections = row().gap(8.0);
     for section in crate::github::Section::ALL {
         sections = sections.child(
@@ -291,7 +295,16 @@ fn github(s: &Desk, k: &Kit) -> El {
         if !metadata.is_empty() {
             text = text.child(label(metadata, 12.0, 400.0, MUTED).wrap_anywhere());
         }
-        let url = entry.url.clone();
+        let mut actions = row().gap(6.0);
+        if let Some(number) = entry.number {
+            actions = actions.child(
+                button("View details")
+                    .disabled(s.busy)
+                    .on_press(move |s: &mut Desk| s.open_github_thread(number))
+                    .build(k)
+                    .key(format!("github-details-{number}")),
+            );
+        }
         list = list
             .child(
                 row()
@@ -299,15 +312,7 @@ fn github(s: &Desk, k: &Kit) -> El {
                     .gap(8.0)
                     .center_y()
                     .child(text)
-                    .child(
-                        button("Open on GitHub")
-                            .on_press_tx(move |s: &mut Desk, tx| {
-                                if let Err(error) = tx.open_url(&url) {
-                                    s.workspace.notice = error.to_string();
-                                }
-                            })
-                            .build(k),
-                    ),
+                    .child(actions.child(open_on_github(k, entry.url.clone()))),
             )
             .child(divider());
     }
@@ -319,6 +324,16 @@ fn github(s: &Desk, k: &Kit) -> El {
         .child(sections)
         .child(divider())
         .child(scroll_list(list))
+}
+
+fn open_on_github(k: &Kit, url: String) -> El {
+    button("Open on GitHub")
+        .on_press_tx(move |s: &mut Desk, tx| {
+            if let Err(error) = tx.open_url(&url) {
+                s.workspace.notice = error.to_string();
+            }
+        })
+        .build(k)
 }
 
 fn settings(s: &Desk, k: &Kit) -> El {

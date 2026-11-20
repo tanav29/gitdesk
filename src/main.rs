@@ -55,10 +55,24 @@ struct BranchComparison {
     compared: bool,
 }
 
+struct GitHubThread {
+    number: u64,
+    title: String,
+    url: String,
+    conversation: Option<github::Conversation>,
+    draft: TextEdit,
+    show_diff: bool,
+    patch: Option<String>,
+    diff_pages: usize,
+}
+
 enum Update {
     Opened(git::Result<(PathBuf, Snapshot)>),
     Settings(git::Result<Entries>, git::Result<()>),
     GitHub(git::Result<Vec<github::Entry>>),
+    GitHubConversation(git::Result<github::Conversation>),
+    GitHubComment(git::Result<git::Result<github::Conversation>>),
+    GitHubDiff(git::Result<String>),
     Terminal(git::Result<Terminal>),
     Repository {
         path: PathBuf,
@@ -83,6 +97,7 @@ struct Desk {
     config: ConfigForm,
     github_section: github::Section,
     github_entries: Vec<github::Entry>,
+    github_thread: Option<GitHubThread>,
     shells: HashMap<PathBuf, Terminal>,
     waker: Option<rune::Waker>,
     task: Latest<Update>,
@@ -98,6 +113,7 @@ impl Desk {
             config: ConfigForm::default(),
             github_section: github::Section::default(),
             github_entries: Vec::new(),
+            github_thread: None,
             shells: HashMap::new(),
             waker: None,
             tab: Tab::Changes,
@@ -146,13 +162,92 @@ impl Desk {
     }
 
     fn load_github(&mut self, section: github::Section) {
+        if self.busy {
+            return;
+        }
         let Some(path) = self.workspace.selected.clone() else {
             return;
         };
         self.github_section = section;
+        self.github_thread = None;
         self.github_entries.clear();
         self.start("Loading GitHub…", move || {
             Update::GitHub(github::list(&path, section))
+        });
+    }
+
+    fn open_github_thread(&mut self, number: u64) {
+        if self.busy || self.github_section == github::Section::Runs {
+            return;
+        }
+        let Some(entry) = self
+            .github_entries
+            .iter()
+            .find(|entry| entry.number == Some(number))
+        else {
+            return;
+        };
+        self.github_thread = Some(GitHubThread {
+            number,
+            title: entry.title.clone(),
+            url: entry.url.clone(),
+            conversation: None,
+            draft: TextEdit::new(""),
+            show_diff: false,
+            patch: None,
+            diff_pages: 1,
+        });
+        self.refresh_github_thread();
+    }
+
+    fn refresh_github_thread(&mut self) {
+        let (Some(repo), Some(thread)) = (&self.workspace.selected, &self.github_thread) else {
+            return;
+        };
+        let (repo, url) = (repo.clone(), thread.url.clone());
+        if thread.show_diff {
+            self.start("Loading changed files…", move || {
+                Update::GitHubDiff(github::diff(&repo, &url))
+            });
+        } else {
+            let section = self.github_section;
+            self.start("Loading conversation…", move || {
+                Update::GitHubConversation(github::conversation(&repo, section, &url))
+            });
+        }
+    }
+
+    fn show_github_diff(&mut self, show_diff: bool) {
+        if self.busy {
+            return;
+        }
+        let Some(thread) = &mut self.github_thread else {
+            return;
+        };
+        if thread.show_diff == show_diff {
+            return;
+        }
+        thread.show_diff = show_diff;
+        self.workspace.notice.clear();
+        if (show_diff && thread.patch.is_none()) || (!show_diff && thread.conversation.is_none()) {
+            self.refresh_github_thread();
+        }
+    }
+
+    fn post_github_comment(&mut self) {
+        let (Some(repo), Some(thread)) = (&self.workspace.selected, &self.github_thread) else {
+            return;
+        };
+        if thread.draft.text.trim().is_empty() {
+            return;
+        }
+        let (repo, url, body) = (repo.clone(), thread.url.clone(), thread.draft.text.clone());
+        let section = self.github_section;
+        self.start("Posting comment…", move || {
+            Update::GitHubComment(
+                github::comment(&repo, section, &url, &body)
+                    .map(|()| github::conversation(&repo, section, &url)),
+            )
         });
     }
 
@@ -227,7 +322,11 @@ impl Desk {
         if tab == Tab::Terminal {
             self.start_shell();
         } else if tab == Tab::GitHub {
-            self.load_github(self.github_section);
+            if self.github_thread.is_some() {
+                self.refresh_github_thread();
+            } else {
+                self.load_github(self.github_section);
+            }
         } else if tab == Tab::Settings {
             self.settings(self.config.scope, None);
         } else if !matches!(tab, Tab::Diff(_))
@@ -304,6 +403,7 @@ impl Desk {
                     self.config = ConfigForm::default();
                     self.github_section = github::Section::default();
                     self.github_entries.clear();
+                    self.github_thread = None;
                     self.comparison = BranchComparison::default();
                     self.tab = Tab::Changes;
                 }
@@ -330,6 +430,48 @@ impl Desk {
                     self.workspace.notice = error;
                     Vec::new()
                 });
+            }
+            Update::GitHubConversation(result) => {
+                if let Some(thread) = &mut self.github_thread {
+                    match result {
+                        Ok(conversation) => {
+                            thread.conversation = Some(conversation);
+                            self.workspace.notice.clear();
+                        }
+                        Err(error) => self.workspace.notice = error,
+                    }
+                }
+            }
+            Update::GitHubComment(result) => {
+                if let Some(thread) = &mut self.github_thread {
+                    match result {
+                        Ok(conversation) => {
+                            thread.draft = TextEdit::new("");
+                            self.workspace.notice = match conversation {
+                                Ok(conversation) => {
+                                    thread.conversation = Some(conversation);
+                                    "Comment posted.".into()
+                                }
+                                Err(error) => format!(
+                                    "Comment posted. Could not refresh the conversation. {error}"
+                                ),
+                            };
+                        }
+                        Err(error) => self.workspace.notice = error,
+                    }
+                }
+            }
+            Update::GitHubDiff(result) => {
+                if let Some(thread) = &mut self.github_thread {
+                    match result {
+                        Ok(patch) => {
+                            thread.patch = Some(patch);
+                            thread.diff_pages = 1;
+                            self.workspace.notice.clear();
+                        }
+                        Err(error) => self.workspace.notice = error,
+                    }
+                }
             }
             Update::Terminal(result) => match result {
                 Ok(shell) => {

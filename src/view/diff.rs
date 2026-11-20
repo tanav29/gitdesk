@@ -220,20 +220,32 @@ fn file_view(file: File<'_>) -> El {
 }
 
 pub(super) fn view(s: &Desk, k: &Kit, empty: &str) -> El {
+    contents(
+        if s.busy { "" } else { &s.patch },
+        s.diff_pages,
+        k,
+        empty,
+        |s| s.diff_pages += 1,
+    )
+}
+
+pub(super) fn contents(
+    patch: &str,
+    pages: usize,
+    k: &Kit,
+    empty: &str,
+    show_more: impl Fn(&mut Desk) + 'static,
+) -> El {
     let mut content = col().gap(8.0);
-    if s.patch.is_empty() || s.busy {
+    if patch.is_empty() {
         return scroll_list(content.child(label(empty, 13.0, 400.0, MUTED)));
     }
-    let mut lines = s.patch.lines();
-    for file in parse(lines.by_ref().take(PAGE_LINES * s.diff_pages)) {
+    let mut lines = patch.lines();
+    for file in parse(lines.by_ref().take(PAGE_LINES * pages)) {
         content = content.child(file_view(file));
     }
     if lines.next().is_some() {
-        content = content.child(
-            button("Show more")
-                .on_press(|s: &mut Desk| s.diff_pages += 1)
-                .build(k),
-        );
+        content = content.child(button("Show more").on_press(show_more).build(k));
     }
     scroll_list(content)
 }
