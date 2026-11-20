@@ -76,6 +76,7 @@ struct Desk {
     draft: TextEdit,
     drafts: HashMap<PathBuf, String>,
     patch: String,
+    diff_pages: usize,
     comparison: BranchComparison,
     opening: bool,
     path: TextEdit,
@@ -103,6 +104,7 @@ impl Desk {
             draft: TextEdit::new(""),
             drafts: HashMap::new(),
             patch: String::new(),
+            diff_pages: 1,
             comparison: BranchComparison::default(),
             task: Latest::default(),
             busy: false,
@@ -360,6 +362,7 @@ impl Desk {
             Update::Diff(result) => match result {
                 Ok(patch) => {
                     self.patch = patch;
+                    self.diff_pages = 1;
                     self.workspace.notice.clear();
                 }
                 Err(error) => self.workspace.notice = error,

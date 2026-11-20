@@ -257,9 +257,20 @@ pub fn compare_branches(repo: &Path, base: &str, head: &str) -> Result<String> {
 }
 
 fn diff_output(repo: &Path, extra: &[&str]) -> Result<String> {
-    let mut args = vec!["diff", "--no-ext-diff", "--no-textconv", "--no-color"];
+    let mut args = vec![
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-color",
+        "--src-prefix=a/",
+        "--dst-prefix=b/",
+        "--output-indicator-new=+",
+        "--output-indicator-old=-",
+        "--output-indicator-context= ",
+    ];
     args.extend_from_slice(extra);
-    output(repo, &args)
+    let args: Vec<_> = args.into_iter().map(OsStr::new).collect();
+    Ok(String::from_utf8_lossy(&git(repo, &args)?).into_owned())
 }
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]

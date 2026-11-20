@@ -1,9 +1,11 @@
 use super::{Desk, DiffMode, Tab};
 use crate::git::{Action, Change, ConfigEdit, Scope, Snapshot};
-use rune::{Color, Cx, El, Family, FileDialogOptions, ScrollSpec, TextStyle, col, el, row, text};
+use rune::{Color, Cx, El, FileDialogOptions, ScrollSpec, TextStyle, col, el, row, text};
 use rune_kit::{
     Button, ButtonVariant, ControlSize, Kit, Select, SelectAppearance, TextInput, root,
 };
+
+mod diff;
 
 const PAGE: &str = "#171a1e";
 const RAIL: &str = "#121417";
@@ -584,11 +586,7 @@ fn diff_controls(s: &Desk, bare: bool, mode: DiffMode, k: &Kit, layers: &mut Vec
 }
 
 fn detail(s: &Desk, data: &Snapshot, k: &Kit, layers: &mut Vec<El>) -> El {
-    let mut body = col().gap(if matches!(s.tab, Tab::Diff(_)) {
-        0.0
-    } else {
-        4.0
-    });
+    let mut body = col().gap(4.0);
     match s.tab {
         Tab::Settings => settings(s, k),
         Tab::GitHub => github(s, k),
@@ -619,9 +617,7 @@ fn detail(s: &Desk, data: &Snapshot, k: &Kit, layers: &mut Vec<El>) -> El {
             scroll_list(body)
         }
         Tab::Diff(mode) => {
-            let content = if s.busy {
-                ""
-            } else if mode == DiffMode::Compare && !s.workspace.notice.is_empty() {
+            let empty = if s.busy || !s.workspace.notice.is_empty() {
                 ""
             } else if mode == DiffMode::Compare && s.comparison.branches.is_empty() {
                 "No local or remote-tracking branches found."
@@ -629,40 +625,15 @@ fn detail(s: &Desk, data: &Snapshot, k: &Kit, layers: &mut Vec<El>) -> El {
                 "Select a base branch and a compare branch."
             } else if mode == DiffMode::Compare && s.patch.is_empty() {
                 "No differences between the selected branch tips."
-            } else if s.patch.is_empty() {
-                "No diff for tracked files in this view."
             } else {
-                &s.patch
+                "No diff for tracked files in this view."
             };
-            for line in content.lines().take(600) {
-                let ink = if line.starts_with('+') {
-                    ADDED
-                } else if line.starts_with('-') {
-                    REMOVED
-                } else {
-                    INK
-                };
-                body = body.child(
-                    text(line)
-                        .font(
-                            TextStyle::new(12.0, 400.0)
-                                .family(Family::SystemMono)
-                                .lh(16.0),
-                        )
-                        .color(color(ink))
-                        .wrap_anywhere()
-                        .selectable(true),
-                );
-            }
-            if content.lines().nth(600).is_some() {
-                body = body.child(label("Showing the first 600 lines.", 12.0, 500.0, MUTED));
-            }
             col()
                 .grow(1.0)
                 .min_h(0.0)
                 .gap(8.0)
                 .child(diff_controls(s, data.bare, mode, k, layers))
-                .child(scroll_list(body))
+                .child(diff::view(s, k, empty))
         }
         _ => {
             if data.history.is_empty() {
