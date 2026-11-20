@@ -1,8 +1,9 @@
 use super::{Desk, DiffMode, Tab};
-use crate::git::{Action, Change, ConfigEdit, Scope, Snapshot};
+use crate::git::{Action, Change, CommitOptions, ConfigEdit, Scope, Snapshot};
 use rune::{Color, Cx, El, FileDialogOptions, ScrollSpec, TextStyle, col, el, row, text};
 use rune_kit::{
-    Button, ButtonVariant, Checkbox, ControlSize, Kit, Select, SelectAppearance, TextInput, root,
+    Button, ButtonVariant, Checkbox, ControlSize, Kit, Menu, MenuItem, Placement, Select,
+    SelectAppearance, TextInput, root,
 };
 
 mod diff;
@@ -441,7 +442,7 @@ fn change_name(c: &Change, staged: bool) -> &'static str {
     }
 }
 
-fn changes(s: &Desk, data: &Snapshot, k: &Kit) -> El {
+fn changes(s: &Desk, data: &Snapshot, k: &Kit, layers: &mut Vec<El>) -> El {
     let mut checkbox_kit = k.clone();
     checkbox_kit.c.border_weak = color("#707d88");
     checkbox_kit.c.border_hover = color(MUTED);
@@ -596,33 +597,130 @@ fn changes(s: &Desk, data: &Snapshot, k: &Kit) -> El {
         }
         files = files.child(group);
     }
+    let options = s.commit_options;
     let input = TextInput::new(&s.draft)
         .height(32.0)
         .label("Commit message")
-        .placeholder("Describe the staged changes")
+        .placeholder(if options.amend {
+            "Leave blank to keep the previous message"
+        } else {
+            "Describe the staged changes"
+        })
         .on_edit(|s: &mut Desk| &mut s.draft)
         .disabled(s.busy)
         .build(k)
         .key("commit-message")
         .grow(1.0);
+    let has_staged = data.changes.iter().any(Change::staged);
     let available = !s.busy
-        && !s.draft.text.trim().is_empty()
-        && data.changes.iter().any(Change::staged)
-        && !data.changes.iter().any(Change::conflict);
-    let commit = button("Commit staged")
-        .variant(ButtonVariant::Contrast)
-        .disabled(!available)
-        .on_press(|s: &mut Desk| s.act(Action::Commit(s.draft.text.clone())))
-        .build(k)
-        .h(32.0)
-        .key("commit");
-    col()
+        && !data.changes.iter().any(Change::conflict)
+        && if options.amend {
+            data.has_head
+        } else {
+            (has_staged || options.allow_empty) && !s.draft.text.trim().is_empty()
+        };
+    let commit = button(if options.amend {
+        "Amend last commit"
+    } else if options.allow_empty && !has_staged {
+        "Create empty commit"
+    } else {
+        "Commit staged"
+    })
+    .variant(ButtonVariant::Contrast)
+    .disabled(!available)
+    .on_press(|s: &mut Desk| s.act(Action::Commit(s.draft.text.clone(), s.commit_options)))
+    .build(k)
+    .h(32.0)
+    .key("commit");
+    let more = commit_menu(s, data, k, layers);
+    let selected: Vec<_> = [
+        (options.sign_off, "Sign off"),
+        (options.sign, "Sign commit"),
+        (options.allow_empty, "Allow empty commit"),
+    ]
+    .into_iter()
+    .filter_map(|(enabled, label)| enabled.then_some(label))
+    .collect();
+    let mut panel = col()
         .min_h(0.0)
         .grow(1.0)
         .gap(8.0)
         .child(scroll_list(files))
-        .child(divider())
-        .child(row().gap(8.0).center_y().child(input).child(commit))
+        .child(divider());
+    if !selected.is_empty() {
+        panel = panel.child(label(selected.join(" · "), 12.0, 500.0, ACCENT));
+    }
+    panel.child(
+        row()
+            .gap(8.0)
+            .center_y()
+            .child(input)
+            .child(commit)
+            .child(more),
+    )
+}
+
+fn commit_menu(s: &Desk, data: &Snapshot, k: &Kit, layers: &mut Vec<El>) -> El {
+    let options = s.commit_options;
+    let trigger = button("More")
+        .variant(ButtonVariant::Outline)
+        .icon(k.glyph.chevron_down)
+        .help("Commit options")
+        .disabled(s.busy)
+        .on_press(|s: &mut Desk| s.commit_menu_open = !s.commit_menu_open)
+        .build(k)
+        .h(32.0)
+        .key("commit-options-button");
+    Menu::new("commit-options")
+        .trigger(trigger)
+        .open(s.commit_menu_open)
+        .on_close(|s: &mut Desk| s.commit_menu_open = false)
+        .placement(Placement::TopEnd)
+        .min_width(290.0)
+        .item(commit_option(
+            "Sign off",
+            "Add a Signed-off-by trailer",
+            options.sign_off,
+            |o| &mut o.sign_off,
+        ))
+        .item(commit_option(
+            "Sign commit",
+            "Use your configured signing key",
+            options.sign,
+            |o| &mut o.sign,
+        ))
+        .separator()
+        .item(
+            commit_option(
+                "Amend last commit",
+                "Replace the last commit on this branch",
+                options.amend,
+                |o| &mut o.amend,
+            )
+            .disabled(!data.has_head),
+        )
+        .item(commit_option(
+            "Allow empty commit",
+            "Allow committing without file changes",
+            options.allow_empty,
+            |o| &mut o.allow_empty,
+        ))
+        .build(k, layers)
+}
+
+fn commit_option(
+    title: &str,
+    description: &str,
+    checked: bool,
+    flag: fn(&mut CommitOptions) -> &mut bool,
+) -> MenuItem {
+    MenuItem::new(title)
+        .description(description)
+        .checked(checked)
+        .on_select(move |s: &mut Desk| {
+            *flag(&mut s.commit_options) = !checked;
+            s.commit_menu_open = false;
+        })
 }
 
 fn diff_controls(s: &Desk, bare: bool, mode: DiffMode, k: &Kit, layers: &mut Vec<El>) -> El {
@@ -729,7 +827,7 @@ fn detail(s: &Desk, data: &Snapshot, k: &Kit, layers: &mut Vec<El>) -> El {
         Tab::Settings => settings(s, k),
         Tab::GitHub => github(s, k),
         Tab::Terminal => crate::terminal_view::view(s, k),
-        Tab::Changes if !data.bare => changes(s, data, k),
+        Tab::Changes if !data.bare => changes(s, data, k, layers),
         Tab::Branches => {
             for branch in &data.branches {
                 let current = branch == &data.branch;

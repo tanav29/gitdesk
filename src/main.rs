@@ -6,7 +6,7 @@ mod terminal_view;
 mod tests;
 mod view;
 
-use git::{Action, ConfigEdit, Entries, Scope, Snapshot};
+use git::{Action, CommitOptions, ConfigEdit, Entries, Scope, Snapshot};
 use rune::{AppSpec, Latest, TextEdit};
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
@@ -91,6 +91,8 @@ struct Desk {
     tab: Tab,
     draft: TextEdit,
     drafts: HashMap<PathBuf, String>,
+    commit_options: CommitOptions,
+    commit_menu_open: bool,
     selected_changes: [HashSet<OsString>; 2],
     patch: String,
     diff_pages: usize,
@@ -123,6 +125,8 @@ impl Desk {
             tab: Tab::Changes,
             draft: TextEdit::new(""),
             drafts: HashMap::new(),
+            commit_options: CommitOptions::default(),
+            commit_menu_open: false,
             selected_changes: Default::default(),
             patch: String::new(),
             diff_pages: 1,
@@ -142,6 +146,7 @@ impl Desk {
             return;
         }
         self.busy = true;
+        self.commit_menu_open = false;
         self.workspace.notice = message.to_owned();
         self.task.request((), move |()| job());
     }
@@ -302,7 +307,7 @@ impl Desk {
                 || Ok(String::new()),
                 |a| a.apply(&path).map(|()| format!("{} complete.", a.label())),
             );
-            let committed = matches!(action, Some(Action::Commit(_))) && outcome.is_ok();
+            let committed = matches!(action, Some(Action::Commit(..))) && outcome.is_ok();
             let snapshot = git::snapshot(&path);
             Update::Repository {
                 path,
@@ -426,6 +431,7 @@ impl Desk {
                     };
                     self.opening = false;
                     self.selected_changes = Default::default();
+                    self.commit_options = CommitOptions::default();
                     self.config = ConfigForm::default();
                     self.github_section = github::Section::default();
                     self.github_entries.clear();
@@ -519,12 +525,16 @@ impl Desk {
                 self.workspace.selected = Some(path);
                 if committed {
                     self.draft = TextEdit::new("");
+                    self.commit_options = CommitOptions::default();
                 }
                 self.workspace.notice = outcome.unwrap_or_else(|e| e);
                 self.workspace.snapshot = snapshot
                     .map_err(|e| self.workspace.notice.push_str(&format!(" {e}")))
                     .ok();
                 if let Some(snapshot) = &self.workspace.snapshot {
+                    if !snapshot.has_head {
+                        self.commit_options.amend = false;
+                    }
                     let [working, staged] = &self.selected_changes;
                     let mut remaining = [HashSet::new(), HashSet::new()];
                     for change in &snapshot.changes {

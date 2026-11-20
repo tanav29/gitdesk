@@ -64,6 +64,56 @@ fn enter_path(rt: &mut Runtime<Desk>, path: &Path) {
 }
 
 #[test]
+fn commit_menu_supports_sign_off_empty_commits_and_amending() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init(repo);
+    let mut rt = Runtime::new(
+        Desk::new(Some(repo.to_owned())),
+        view::view,
+        MIN_WINDOW_SIZE,
+        Env {
+            system_dark: false,
+            scale: 1.0,
+        },
+    );
+    rt.poll = Some(|s, _, _| s.poll());
+    settle(&mut rt);
+
+    assert!(rt.accessibility_action(
+        "commit-options-button",
+        rune::accesskit::Action::Expand,
+        None,
+    ));
+    settle(&mut rt);
+    click(&mut rt, "commit-options-item0");
+    click(&mut rt, "commit-options-trigger");
+    click(&mut rt, "commit-options-item4");
+    click(&mut rt, "commit-message");
+    rt.paste("Checkpoint");
+    settle(&mut rt);
+    click(&mut rt, "commit");
+    let message = fixture_git(repo, &["log", "-1", "--format=%B"]);
+    assert!(message.contains("Signed-off-by: Gitdesk Test <test@example.invalid>"));
+    assert!(fixture_git(repo, &["ls-tree", "-r", "--name-only", "HEAD"]).is_empty());
+    assert!(!rt.state.commit_options.sign_off && !rt.state.commit_options.allow_empty);
+
+    fs::write(repo.join("added.txt"), "amended contents").unwrap();
+    click(&mut rt, "refresh");
+    click(&mut rt, "Stage-added.txt");
+    click(&mut rt, "commit-options-trigger");
+    click(&mut rt, "commit-options-item3");
+    click(&mut rt, "commit");
+    assert_eq!(fixture_git(repo, &["rev-list", "--count", "HEAD"]), "1");
+    assert_eq!(fixture_git(repo, &["log", "-1", "--format=%B"]), message);
+    assert_eq!(
+        fixture_git(repo, &["show", "HEAD:added.txt"]),
+        "amended contents"
+    );
+    assert!(!rt.state.commit_options.amend);
+}
+
+#[test]
 fn history_graph_opens_root_and_merge_patches_in_the_diff_tab() {
     let tmp = tempfile::tempdir().unwrap();
     let repo = tmp.path();
@@ -218,7 +268,9 @@ fn worktrees_bare_repositories_and_remote_actions() {
     init(&repo);
     fs::write(repo.join("file"), "one\n").unwrap();
     Action::Stage(vec!["file".into()]).apply(&repo).unwrap();
-    Action::Commit("Initial".into()).apply(&repo).unwrap();
+    Action::Commit("Initial".into(), CommitOptions::default())
+        .apply(&repo)
+        .unwrap();
     fs::write(repo.join("file"), "two\n").unwrap();
     assert!(git::diff(&repo, false).unwrap().contains("+two"));
     Action::Stage(vec!["file".into()]).apply(&repo).unwrap();
@@ -369,7 +421,9 @@ fn settings_and_interactive_git_use_the_open_repository() {
     Action::Stage(vec!["sample.txt".into()])
         .apply(&repo)
         .unwrap();
-    Action::Commit("first".into()).apply(&repo).unwrap();
+    Action::Commit("first".into(), CommitOptions::default())
+        .apply(&repo)
+        .unwrap();
     fs::write(repo.join("sample.txt"), "two\n").unwrap();
     click(&mut rt, "tab-Terminal");
     await_terminal(&mut rt, |s| s.screen(|sc| !sc.contents().trim().is_empty()));

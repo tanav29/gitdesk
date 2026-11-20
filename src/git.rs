@@ -245,11 +245,19 @@ pub fn snapshot(repo: &Path) -> Result<Snapshot> {
     })
 }
 
+#[derive(Clone, Copy, Default)]
+pub struct CommitOptions {
+    pub sign_off: bool,
+    pub sign: bool,
+    pub amend: bool,
+    pub allow_empty: bool,
+}
+
 #[derive(Clone)]
 pub enum Action {
     Stage(Vec<OsString>),
     Unstage(Vec<OsString>, bool),
-    Commit(String),
+    Commit(String, CommitOptions),
     Switch(String),
     Fetch,
     Pull,
@@ -261,7 +269,8 @@ impl Action {
         match self {
             Self::Stage(_) => "Stage",
             Self::Unstage(..) => "Unstage",
-            Self::Commit(_) => "Commit",
+            Self::Commit(_, options) if options.amend => "Amend commit",
+            Self::Commit(..) => "Commit",
             Self::Switch(_) => "Switch branch",
             Self::Fetch => "Fetch",
             Self::Pull => "Pull",
@@ -273,7 +282,25 @@ impl Action {
             Self::Stage(paths) => (&["add"], paths),
             Self::Unstage(paths, true) => (&["reset", "-q", "HEAD"], paths),
             Self::Unstage(paths, false) => (&["rm", "--cached", "-f"], paths),
-            Self::Commit(message) => return output(repo, &["commit", "-m", message]).map(|_| ()),
+            Self::Commit(message, options) => {
+                let mut args = vec!["commit"];
+                args.extend(
+                    [
+                        (options.sign_off, "--signoff"),
+                        (options.sign, "--gpg-sign"),
+                        (options.amend, "--amend"),
+                        (options.allow_empty, "--allow-empty"),
+                    ]
+                    .into_iter()
+                    .filter_map(|(enabled, flag)| enabled.then_some(flag)),
+                );
+                if options.amend && message.trim().is_empty() {
+                    args.push("--no-edit");
+                } else {
+                    args.extend(["-m", message]);
+                }
+                return output(repo, &args).map(|_| ());
+            }
             Self::Switch(branch) => return output(repo, &["switch", "--", branch]).map(|_| ()),
             Self::Fetch => return output(repo, &["fetch"]).map(|_| ()),
             Self::Pull => return output(repo, &["pull", "--ff-only"]).map(|_| ()),

@@ -16,6 +16,8 @@ Pass a repository path to open it at launch, for example `cargo run --locked -- 
 
 Use **Changes** to stage or unstage individual files. To work on multiple files, use the checkboxes beside their names or the checkbox in a section header, then choose **Stage selected** or **Unstage selected**. Enter a commit message and choose **Commit staged** to commit the index. Gitdesk keeps a separate message draft for each repository until you close the app.
 
+The **More** menu beside the commit button lets you add a signed-off-by trailer, sign with your configured Git signing key, amend the last commit, or allow a commit with no file changes. When amending, leave the message blank to reuse the previous message. Options apply to the next successful commit.
+
 **Diff** shows tracked changes in the working tree or index. **History** graphs up to 40 commits reachable from local branches, remote-tracking branches, and the current HEAD. Select a commit to open its patch in **Diff**. Merge commits are compared with their first parent. **Branches** lists local branches and lets you switch between them.
 
 In **Diff → Compare branches**, choose a base and a comparison branch to view the changes from the base tip to the comparison tip. The pickers include local and remote-tracking branches. Use **Fetch** to update remote-tracking branches.
