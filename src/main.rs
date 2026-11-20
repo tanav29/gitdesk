@@ -12,6 +12,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use terminal::Terminal;
 
+const MIN_WINDOW_SIZE: (f32, f32) = (740.0, 460.0);
+
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum DiffMode {
     WorkingTree,
@@ -382,7 +384,7 @@ impl Desk {
 
 fn main() {
     rune::run(AppSpec {
-        min_size: Some((830.0, 550.0)),
+        min_size: Some(MIN_WINDOW_SIZE),
         setup: Some(|s: &mut Desk, waker| {
             s.task.set_waker(waker.clone());
             s.waker = Some(waker);
@@ -390,7 +392,7 @@ fn main() {
         poll: Some(|s: &mut Desk, _, _| s.poll()),
         ..AppSpec::new(
             "Gitdesk",
-            (1120.0, 740.0),
+            (1000.0, 640.0),
             || Desk::new(rune::extra_args().first().map(PathBuf::from)),
             view::view,
         )

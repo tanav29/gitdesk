@@ -1,10 +1,13 @@
 use super::Desk;
+use crate::view::button;
 use rune::{Color, El, Family, Key, TextStyle, col, el, row, text};
-use rune_kit::{Button, Kit};
+use rune_kit::Kit;
 
 const CELL: f32 = 8.0;
 const LINE: f32 = 18.0;
-const INSET: f32 = 12.0;
+const INSET: f32 = 8.0;
+const BACKGROUND: u32 = 0x101215;
+const FOREGROUND: u32 = 0xe5eaee;
 
 fn rgb(value: u32) -> Color {
     let channel = |shift| rune::color::srgb_decode(((value >> shift) & 255u32) as f32 / 255.0);
@@ -62,8 +65,8 @@ fn grid(screen: &vt100::Screen, mut panel: El) -> El {
                 x += 1;
             }
             let (mut fg, mut bg) = (
-                palette(first.fgcolor(), 0xe3e8ee),
-                palette(first.bgcolor(), 0x202530),
+                palette(first.fgcolor(), FOREGROUND),
+                palette(first.bgcolor(), BACKGROUND),
             );
             if first.inverse() {
                 std::mem::swap(&mut fg, &mut bg);
@@ -126,7 +129,7 @@ fn paste_from_clipboard(s: &mut Desk, tx: &mut rune::Tx) {
 
 pub fn view(s: &Desk, k: &Kit) -> El {
     let Some(shell) = s.shell() else {
-        return Button::new("Start terminal")
+        return button("Start terminal")
             .disabled(s.busy)
             .on_press(|s: &mut Desk| s.start_shell())
             .build(k);
@@ -136,11 +139,12 @@ pub fn view(s: &Desk, k: &Kit) -> El {
         .center_y()
         .child(
             text(shell.title.clone())
-                .font(TextStyle::new(20.0, 600.0))
+                .font(TextStyle::new(15.0, 600.0))
+                .color(rgb(FOREGROUND))
                 .grow(1.0),
         )
         .child(
-            Button::new("Paste")
+            button("Paste")
                 .disabled(shell.ended.is_some())
                 .on_press_tx(|s: &mut Desk, tx| {
                     tx.focus("terminal-screen", false);
@@ -149,7 +153,7 @@ pub fn view(s: &Desk, k: &Kit) -> El {
                 .build(k),
         )
         .child(
-            Button::new("Copy screen")
+            button("Copy screen")
                 .on_press_tx(|s: &mut Desk, tx| {
                     if let Some(shell) = s.shell() {
                         tx.copy(shell.screen(|screen| screen.contents()));
@@ -158,11 +162,13 @@ pub fn view(s: &Desk, k: &Kit) -> El {
                 .build(k),
         );
     if let Some(status) = &shell.ended {
-        bar = bar.child(text(status.clone())).child(
-            Button::new("Restart")
-                .on_press(|s: &mut Desk| s.start_shell())
-                .build(k),
-        );
+        bar = bar
+            .child(text(status.clone()).color(rgb(FOREGROUND)))
+            .child(
+                button("Restart")
+                    .on_press(|s: &mut Desk| s.start_shell())
+                    .build(k),
+            );
     }
     let panel = el()
         .key("terminal-screen")
@@ -174,8 +180,8 @@ pub fn view(s: &Desk, k: &Kit) -> El {
         .w_full()
         .min_h(0.0)
         .clip_rounded(6.0)
-        .fill(rgb(0x202530))
-        .focus_ring(2.0, 0.0, rgb(0x5574b6))
+        .fill(rgb(BACKGROUND))
+        .focus_ring(2.0, 0.0, rgb(0x8fd8cf))
         .on_layout(|s: &mut Desk, [_, _, w, h]| {
             if let Some(t) = s.shell() {
                 t.resize(
@@ -200,7 +206,7 @@ pub fn view(s: &Desk, k: &Kit) -> El {
     col()
         .grow(1.0)
         .min_h(0.0)
-        .gap(10.0)
+        .gap(6.0)
         .child(bar)
         .child(shell.screen(|screen| grid(screen, panel)))
 }

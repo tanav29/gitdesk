@@ -75,7 +75,7 @@ fn staging_commit_and_drafts_follow_the_selected_repository() {
     let mut rt = Runtime::new(
         Desk::new(None),
         view::view,
-        (1120.0, 740.0),
+        MIN_WINDOW_SIZE,
         Env {
             system_dark: false,
             scale: 1.0,
@@ -205,7 +205,7 @@ fn compares_local_and_remote_branch_tips_without_switching_branches() {
     let mut rt = Runtime::new(
         Desk::new(Some(repo.to_owned())),
         view::view,
-        (1120.0, 740.0),
+        MIN_WINDOW_SIZE,
         Env {
             system_dark: false,
             scale: 1.0,
@@ -243,7 +243,7 @@ fn settings_and_interactive_git_use_the_open_repository() {
     let mut rt = Runtime::new(
         Desk::new(Some(repo.clone())),
         view::view,
-        (1120.0, 740.0),
+        MIN_WINDOW_SIZE,
         Env {
             system_dark: false,
             scale: 1.0,
@@ -334,7 +334,7 @@ fn github_renders_pull_requests_and_workflow_status() {
     let mut rt = Runtime::new(
         desk,
         view::view,
-        (1120.0, 740.0),
+        MIN_WINDOW_SIZE,
         Env {
             system_dark: false,
             scale: 1.0,

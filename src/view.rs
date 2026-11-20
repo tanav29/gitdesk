@@ -1,12 +1,24 @@
 use super::{Desk, DiffMode, Tab};
 use crate::git::{Action, Change, ConfigEdit, Scope, Snapshot};
-use rune::{Color, Cx, El, FileDialogOptions, ScrollSpec, TextStyle, col, el, row, text};
-use rune_kit::{Button, ButtonVariant, Kit, Select, SelectAppearance, TextInput, root};
+use rune::{Color, Cx, El, Family, FileDialogOptions, ScrollSpec, TextStyle, col, el, row, text};
+use rune_kit::{
+    Button, ButtonVariant, ControlSize, Kit, Select, SelectAppearance, TextInput, root,
+};
 
-const INK: &str = "#20283a";
-const MUTED: &str = "#596579";
-const ACCENT: &str = "#3856a3";
-const RULE: &str = "#dce1e9";
+const PAGE: &str = "#171a1e";
+const RAIL: &str = "#121417";
+const HOVER: &str = "#252a30";
+const SELECTED: &str = "#223438";
+const INK: &str = "#e5eaee";
+const MUTED: &str = "#a0abb5";
+const ACCENT: &str = "#8fd8cf";
+const RULE: &str = "#30363d";
+const ADDED: &str = "#8cd4a5";
+const REMOVED: &str = "#f2a5a3";
+
+pub(crate) fn button(title: impl Into<String>) -> Button {
+    Button::new(title).control_size(ControlSize::Regular)
+}
 
 fn color(hex: &str) -> Color {
     rune::color::hex(hex).expect("valid palette color")
@@ -29,7 +41,7 @@ fn scroll_list(body: El) -> El {
         .child(body)
 }
 fn command(k: &Kit, name: &str, action: Action, disabled: bool) -> El {
-    Button::new(name)
+    button(name)
         .variant(ButtonVariant::Outline)
         .disabled(disabled)
         .on_press(move |s: &mut Desk| s.act(action.clone()))
@@ -39,8 +51,8 @@ fn command(k: &Kit, name: &str, action: Action, disabled: bool) -> El {
 fn brand() -> El {
     let mark = el()
         .size(30.0, 30.0)
-        .radius(8.0)
-        .fill(color(ACCENT))
+        .radius(6.0)
+        .fill(color("#315652"))
         .child(el().size(2.0, 15.0).absolute(9.0, 7.0).fill(Color::WHITE))
         .child(el().size(10.0, 2.0).absolute(10.0, 14.0).fill(Color::WHITE))
         .child(el().size(2.0, 7.0).absolute(19.0, 9.0).fill(Color::WHITE))
@@ -63,15 +75,15 @@ fn brand() -> El {
                 .fill(Color::WHITE),
         );
     row()
-        .h(48.0)
-        .gap(10.0)
+        .h(30.0)
+        .gap(8.0)
         .center_y()
         .child(mark)
-        .child(label("Gitdesk", 21.0, 600.0, INK))
+        .child(label("Gitdesk", 16.0, 600.0, INK))
 }
 
 fn opener(s: &Desk, k: &Kit) -> El {
-    let browse = Button::new("Browse…")
+    let browse = button("Browse…")
         .disabled(s.busy)
         .on_press_tx(|s: &mut Desk, tx| {
             tx.open_folder(
@@ -89,8 +101,8 @@ fn opener(s: &Desk, k: &Kit) -> El {
         })
         .build(k)
         .key("browse");
-    let mut actions = row().gap(10.0).child(
-        Button::new("Open repository")
+    let mut actions = row().gap(8.0).child(
+        button("Open repository")
             .variant(ButtonVariant::Contrast)
             .disabled(s.busy || s.path.text.trim().is_empty())
             .on_press(|s: &mut Desk| s.open_input())
@@ -99,7 +111,7 @@ fn opener(s: &Desk, k: &Kit) -> El {
     );
     if s.workspace.selected.is_some() {
         actions = actions.child(
-            Button::new("Cancel")
+            button("Cancel")
                 .disabled(s.busy)
                 .on_press(|s: &mut Desk| {
                     s.opening = false;
@@ -109,15 +121,15 @@ fn opener(s: &Desk, k: &Kit) -> El {
         );
     }
     let mut panel = col()
-        .w(560.0)
-        .padding(32.0)
-        .gap(16.0)
-        .fill(Color::WHITE)
+        .w(470.0)
+        .padding(18.0)
+        .gap(8.0)
+        .fill(color(PAGE))
         .border(1.0, color(RULE))
-        .radius(10.0)
+        .radius(8.0)
         .child(brand())
         .child(divider())
-        .child(label("Open a repository", 27.0, 600.0, INK))
+        .child(label("Open a repository", 19.0, 600.0, INK))
         .child(label("Repository path", 13.0, 500.0, MUTED))
         .child(
             row()
@@ -125,6 +137,7 @@ fn opener(s: &Desk, k: &Kit) -> El {
                 .center_y()
                 .child(
                     TextInput::new(&s.path)
+                        .height(28.0)
                         .label("Repository path")
                         .placeholder("Enter a local repository path")
                         .on_edit(|s: &mut Desk| &mut s.path)
@@ -144,7 +157,7 @@ fn opener(s: &Desk, k: &Kit) -> El {
         .w_full()
         .h_full()
         .center()
-        .fill(color("#f1f4f8"))
+        .fill(color(RAIL))
         .child(panel)
 }
 
@@ -156,11 +169,11 @@ fn sidebar(s: &Desk, k: &Kit) -> El {
         s.tab
     };
     let mut rail = col()
-        .w(190.0)
+        .w(156.0)
         .h_full()
-        .padding(16.0)
-        .gap(8.0)
-        .fill(color("#f1f4f8"))
+        .padding(10.0)
+        .gap(4.0)
+        .fill(color(RAIL))
         .child(brand())
         .child(divider());
     for (title, tab) in [
@@ -188,18 +201,18 @@ fn sidebar(s: &Desk, k: &Kit) -> El {
         let active = tab == current || matches!((tab, current), (Tab::Diff(_), Tab::Diff(_)));
         let mut item = row()
             .key(format!("tab-{title}"))
-            .h(36.0)
-            .px(10.0)
-            .gap(9.0)
+            .h(30.0)
+            .px(6.0)
+            .gap(7.0)
             .center_y()
             .role("button")
             .label(title)
             .focusable(!s.busy)
             .radius(5.0)
             .focus_ring(2.0, 0.0, color(ACCENT))
-            .hover(color("#e3e8f3"))
+            .hover(color(HOVER))
             .fill(if active {
-                color("#dbe5fb")
+                color(SELECTED)
             } else {
                 Color::TRANSPARENT
             })
@@ -208,14 +221,19 @@ fn sidebar(s: &Desk, k: &Kit) -> El {
             } else {
                 Color::TRANSPARENT
             }))
-            .child(label(title, 14.0, if active { 600.0 } else { 400.0 }, INK));
+            .child(label(
+                title,
+                13.0,
+                if active { 600.0 } else { 400.0 },
+                if active { INK } else { MUTED },
+            ));
         if !s.busy {
             item = item.on_press(move |s: &mut Desk| s.select_tab(tab));
         }
         rail = rail.child(item);
     }
     rail.child(el().grow(1.0)).child(divider()).child(
-        Button::new("Open repository…")
+        button("Open repository…")
             .disabled(s.busy)
             .on_press(|s: &mut Desk| {
                 s.opening = true;
@@ -231,7 +249,7 @@ fn github(s: &Desk, k: &Kit) -> El {
     let mut sections = row().gap(8.0);
     for section in crate::github::Section::ALL {
         sections = sections.child(
-            Button::new(section.label())
+            button(section.label())
                 .variant(if section == s.github_section {
                     ButtonVariant::Contrast
                 } else {
@@ -276,11 +294,11 @@ fn github(s: &Desk, k: &Kit) -> El {
             .child(
                 row()
                     .key(format!("github-entry-{}", entry.url))
-                    .gap(12.0)
+                    .gap(8.0)
                     .center_y()
                     .child(text)
                     .child(
-                        Button::new("Open on GitHub")
+                        button("Open on GitHub")
                             .on_press_tx(move |s: &mut Desk, tx| {
                                 if let Err(error) = tx.open_url(&url) {
                                     s.workspace.notice = error.to_string();
@@ -295,7 +313,7 @@ fn github(s: &Desk, k: &Kit) -> El {
     col()
         .grow(1.0)
         .min_h(0.0)
-        .gap(12.0)
+        .gap(8.0)
         .child(sections)
         .child(divider())
         .child(scroll_list(list))
@@ -306,7 +324,7 @@ fn settings(s: &Desk, k: &Kit) -> El {
     let mut scopes = row().gap(6.0).center_y();
     for scope in [Scope::Local, Scope::Global, Scope::Worktree, Scope::System] {
         scopes = scopes.child(
-            Button::new(scope.label())
+            button(scope.label())
                 .variant(if form.scope == scope {
                     ButtonVariant::Contrast
                 } else {
@@ -323,14 +341,14 @@ fn settings(s: &Desk, k: &Kit) -> El {
         let (name, val) = (key.clone(), value.clone());
         let mut entry = row()
             .h(30.0)
-            .gap(12.0)
+            .gap(8.0)
             .px(6.0)
             .center_y()
             .role("button")
             .label(format!("Edit {key}"))
             .focusable(!s.busy)
             .key(format!("setting-{i}"))
-            .hover(color("#edf1f8"))
+            .hover(color(HOVER))
             .focus_ring(2.0, 0.0, color(ACCENT))
             .child(label(key, 13.0, 500.0, INK).grow(1.0).truncate_middle())
             .child(label(value, 13.0, 400.0, MUTED).grow(1.0).truncate());
@@ -346,6 +364,7 @@ fn settings(s: &Desk, k: &Kit) -> El {
         list = list.child(label("No entries in this scope.", 13.0, 400.0, MUTED));
     }
     let key = TextInput::new(&form.key)
+        .height(28.0)
         .label("Setting name")
         .placeholder("user.name")
         .on_edit(|s: &mut Desk| &mut s.config.key)
@@ -354,6 +373,7 @@ fn settings(s: &Desk, k: &Kit) -> El {
         .key("config-key")
         .grow(1.0);
     let value = TextInput::new(&form.value)
+        .height(28.0)
         .label("Setting value")
         .placeholder("Value")
         .on_edit(|s: &mut Desk| &mut s.config.value)
@@ -368,7 +388,7 @@ fn settings(s: &Desk, k: &Kit) -> El {
         ("Remove value", ConfigEdit::Remove),
     ] {
         buttons = buttons.child(
-            Button::new(title)
+            button(title)
                 .disabled(s.busy || form.key.text.trim().is_empty())
                 .on_press(move |s: &mut Desk| s.settings(s.config.scope, Some(mode)))
                 .build(k)
@@ -378,7 +398,7 @@ fn settings(s: &Desk, k: &Kit) -> El {
     col()
         .grow(1.0)
         .min_h(0.0)
-        .gap(10.0)
+        .gap(8.0)
         .child(label("Git settings", 20.0, 600.0, INK))
         .child(scopes)
         .child(divider())
@@ -412,7 +432,7 @@ fn changes(s: &Desk, data: &Snapshot, k: &Kit) -> El {
         let name = if staged { "Staged" } else { "Working tree" };
         files = files.child(
             row()
-                .h(40.0)
+                .h(30.0)
                 .center_y()
                 .gap(8.0)
                 .child(label(name, 16.0, 600.0, INK))
@@ -436,15 +456,15 @@ fn changes(s: &Desk, data: &Snapshot, k: &Kit) -> El {
                 Action::Stage(c.path.clone())
             };
             let ink = if staged {
-                "#207057"
+                ADDED
             } else if c.conflict() {
-                "#a13936"
+                REMOVED
             } else {
                 MUTED
             };
             files = files.child(
                 row()
-                    .h(34.0)
+                    .h(30.0)
                     .center_y()
                     .gap(8.0)
                     .child(label(kind, 12.0, 500.0, ink).w(74.0))
@@ -465,6 +485,7 @@ fn changes(s: &Desk, data: &Snapshot, k: &Kit) -> El {
         files = files.child(divider());
     }
     let input = TextInput::new(&s.draft)
+        .height(28.0)
         .label("Commit message")
         .placeholder("Describe the staged changes")
         .on_edit(|s: &mut Desk| &mut s.draft)
@@ -476,7 +497,7 @@ fn changes(s: &Desk, data: &Snapshot, k: &Kit) -> El {
         && !s.draft.text.trim().is_empty()
         && data.changes.iter().any(Change::staged)
         && !data.changes.iter().any(Change::conflict);
-    let commit = Button::new("Commit staged")
+    let commit = button("Commit staged")
         .variant(ButtonVariant::Contrast)
         .disabled(!available)
         .on_press(|s: &mut Desk| s.act(Action::Commit(s.draft.text.clone())))
@@ -485,9 +506,9 @@ fn changes(s: &Desk, data: &Snapshot, k: &Kit) -> El {
     col()
         .min_h(0.0)
         .grow(1.0)
-        .gap(12.0)
+        .gap(8.0)
         .child(scroll_list(files))
-        .child(row().gap(10.0).center_y().child(input).child(commit))
+        .child(row().gap(8.0).center_y().child(input).child(commit))
 }
 
 fn diff_controls(s: &Desk, bare: bool, mode: DiffMode, k: &Kit, layers: &mut Vec<El>) -> El {
@@ -501,7 +522,7 @@ fn diff_controls(s: &Desk, bare: bool, mode: DiffMode, k: &Kit, layers: &mut Vec
             continue;
         }
         modes = modes.child(
-            Button::new(title)
+            button(title)
                 .variant(if mode == choice {
                     ButtonVariant::Contrast
                 } else {
@@ -513,12 +534,12 @@ fn diff_controls(s: &Desk, bare: bool, mode: DiffMode, k: &Kit, layers: &mut Vec
                 .key(title),
         );
     }
-    let controls = col().gap(10.0).child(modes);
+    let controls = col().gap(8.0).child(modes);
     if mode != DiffMode::Compare {
         return controls;
     }
     let comparison = &s.comparison;
-    let mut pickers = row().gap(10.0).center_y();
+    let mut pickers = row().gap(8.0).center_y();
     for (index, (key, title)) in [
         ("base-branch", "Base branch"),
         ("compare-branch", "Compare branch"),
@@ -531,7 +552,7 @@ fn diff_controls(s: &Desk, bare: bool, mode: DiffMode, k: &Kit, layers: &mut Vec
             .placeholder(title)
             .label(title)
             .appearance(SelectAppearance::Field)
-            .width(190.0)
+            .width(176.0)
             .disabled(s.busy || comparison.branches.is_empty())
             .open(comparison.picker == Some(index))
             .on_toggle(move |s: &mut Desk| s.comparison.picker = Some(index))
@@ -553,7 +574,7 @@ fn diff_controls(s: &Desk, bare: bool, mode: DiffMode, k: &Kit, layers: &mut Vec
     }
     controls.child(
         pickers.child(
-            Button::new("Compare")
+            button("Compare")
                 .disabled(s.busy || comparison.selected.iter().any(Option::is_none))
                 .on_press(|s: &mut Desk| s.compare_branches())
                 .build(k)
@@ -563,7 +584,11 @@ fn diff_controls(s: &Desk, bare: bool, mode: DiffMode, k: &Kit, layers: &mut Vec
 }
 
 fn detail(s: &Desk, data: &Snapshot, k: &Kit, layers: &mut Vec<El>) -> El {
-    let mut body = col().gap(7.0);
+    let mut body = col().gap(if matches!(s.tab, Tab::Diff(_)) {
+        0.0
+    } else {
+        4.0
+    });
     match s.tab {
         Tab::Settings => settings(s, k),
         Tab::GitHub => github(s, k),
@@ -573,7 +598,7 @@ fn detail(s: &Desk, data: &Snapshot, k: &Kit, layers: &mut Vec<El>) -> El {
             for branch in &data.branches {
                 let current = branch == &data.branch;
                 let mut line = row()
-                    .h(36.0)
+                    .h(30.0)
                     .center_y()
                     .child(label(branch, 14.0, 500.0, INK).grow(1.0).truncate());
                 if current {
@@ -611,14 +636,20 @@ fn detail(s: &Desk, data: &Snapshot, k: &Kit, layers: &mut Vec<El>) -> El {
             };
             for line in content.lines().take(600) {
                 let ink = if line.starts_with('+') {
-                    "#21664e"
+                    ADDED
                 } else if line.starts_with('-') {
-                    "#9a373d"
+                    REMOVED
                 } else {
                     INK
                 };
                 body = body.child(
-                    label(line, 13.0, 400.0, ink)
+                    text(line)
+                        .font(
+                            TextStyle::new(12.0, 400.0)
+                                .family(Family::SystemMono)
+                                .lh(16.0),
+                        )
+                        .color(color(ink))
                         .wrap_anywhere()
                         .selectable(true),
                 );
@@ -629,7 +660,7 @@ fn detail(s: &Desk, data: &Snapshot, k: &Kit, layers: &mut Vec<El>) -> El {
             col()
                 .grow(1.0)
                 .min_h(0.0)
-                .gap(10.0)
+                .gap(8.0)
                 .child(diff_controls(s, data.bare, mode, k, layers))
                 .child(scroll_list(body))
         }
@@ -641,8 +672,8 @@ fn detail(s: &Desk, data: &Snapshot, k: &Kit, layers: &mut Vec<El>) -> El {
                 body = body
                     .child(
                         row()
-                            .h(32.0)
-                            .gap(14.0)
+                            .h(26.0)
+                            .gap(8.0)
                             .center_y()
                             .child(label(id, 13.0, 500.0, ACCENT).w(82.0))
                             .child(label(title, 14.0, 400.0, INK).grow(1.0).truncate()),
@@ -655,7 +686,8 @@ fn detail(s: &Desk, data: &Snapshot, k: &Kit, layers: &mut Vec<El>) -> El {
 }
 
 pub fn view(s: &Desk, _: &mut Cx<Desk>) -> El {
-    let k = Kit::neutral(false);
+    let mut k = Kit::neutral(true);
+    k.c.border_focus = color(ACCENT);
     if s.opening {
         return opener(s, &k);
     }
@@ -667,7 +699,7 @@ pub fn view(s: &Desk, _: &mut Cx<Desk>) -> El {
         .and_then(|p| p.file_name())
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| "Workspace".into());
-    let refresh = Button::new("Refresh")
+    let refresh = button("Refresh")
         .disabled(s.busy)
         .on_press(|s: &mut Desk| {
             if s.tab == Tab::Diff(DiffMode::Compare) && s.comparison.compared {
@@ -678,40 +710,47 @@ pub fn view(s: &Desk, _: &mut Cx<Desk>) -> El {
         })
         .build(&k)
         .key("refresh");
+    let mut toolbar = row().center_y().gap(6.0).child(
+        label(title, 20.0, 600.0, INK)
+            .grow(1.0)
+            .min_w(0.0)
+            .truncate(),
+    );
+    if let Some(data) = &w.snapshot {
+        toolbar = toolbar.child(command(&k, "Fetch", Action::Fetch, s.busy));
+        if !data.bare {
+            toolbar = toolbar.child(command(&k, "Pull", Action::Pull, s.busy));
+        }
+        toolbar = toolbar.child(command(&k, "Push", Action::Push, s.busy));
+    }
+    let mut header = col().gap(4.0).child(toolbar.child(refresh));
+    if let Some(path) = &w.selected {
+        let mut metadata = row().center_y().gap(8.0).child(
+            label(path.display().to_string(), 12.0, 400.0, MUTED)
+                .grow(1.0)
+                .min_w(0.0)
+                .truncate_head(),
+        );
+        if let Some(data) = &w.snapshot {
+            let branch = if data.bare {
+                format!("Bare · {}", data.branch)
+            } else {
+                data.branch.clone()
+            };
+            metadata = metadata.child(label(branch, 12.0, 500.0, ACCENT).max_w(180.0).truncate());
+        }
+        header = header.child(metadata);
+    }
     let mut main = col()
         .grow(1.0)
         .min_w(0.0)
         .h_full()
-        .padding(24.0)
-        .gap(14.0)
-        .child(
-            row()
-                .center_y()
-                .gap(12.0)
-                .child(label(title, 27.0, 600.0, INK).grow(1.0).truncate())
-                .child(refresh),
-        );
-    if let Some(path) = &w.selected {
-        main = main.child(label(path.display().to_string(), 12.0, 400.0, MUTED).truncate_head());
-    }
+        .padding(12.0)
+        .gap(8.0)
+        .child(header)
+        .child(divider());
     if let Some(data) = &w.snapshot {
-        let meta = if data.bare {
-            format!("Bare repository   /   {}", data.branch)
-        } else {
-            format!("Branch   /   {}", data.branch)
-        };
-        let mut toolbar = row()
-            .gap(6.0)
-            .center_y()
-            .child(label(meta, 13.0, 500.0, ACCENT).grow(1.0).truncate())
-            .child(command(&k, "Fetch", Action::Fetch, s.busy));
-        if !data.bare {
-            toolbar = toolbar.child(command(&k, "Pull", Action::Pull, s.busy));
-        }
-        main = main
-            .child(toolbar.child(command(&k, "Push", Action::Push, s.busy)))
-            .child(divider())
-            .child(detail(s, data, &k, &mut layers));
+        main = main.child(detail(s, data, &k, &mut layers));
     } else {
         let hint = "Repository could not be read.";
         if s.tab == Tab::Settings {
@@ -743,7 +782,7 @@ pub fn view(s: &Desk, _: &mut Cx<Desk>) -> El {
     let body = row()
         .w_full()
         .h_full()
-        .fill(Color::WHITE)
+        .fill(color(PAGE))
         .child(sidebar(s, &k))
         .child(el().w(1.0).h_full().fill(color(RULE)))
         .child(main);
