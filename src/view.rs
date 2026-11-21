@@ -10,6 +10,7 @@ mod diff;
 mod github_thread;
 mod history;
 mod history_actions;
+mod integration;
 pub(crate) use history_actions::HistoryForm;
 mod stashes;
 mod tags;
@@ -634,6 +635,9 @@ fn changes(s: &Desk, data: &Snapshot, k: &Kit, layers: &mut Vec<El>) -> El {
         }
         files = files.child(group);
     }
+    if data.operation.is_some() {
+        return scroll_list(files);
+    }
     let options = s.commit_options;
     let input = TextInput::new(&s.draft)
         .height(32.0)
@@ -869,6 +873,9 @@ fn diff_controls(s: &Desk, bare: bool, mode: DiffMode, k: &Kit, layers: &mut Vec
 }
 
 fn detail(s: &Desk, data: &Snapshot, k: &Kit, layers: &mut Vec<El>) -> El {
+    if let Some(plan) = &s.integration {
+        return integration::preview(s, data, plan, k);
+    }
     if let Some(form) = &s.history_form {
         return history_actions::form(s, data, form, k);
     }
@@ -969,7 +976,7 @@ fn detail(s: &Desk, data: &Snapshot, k: &Kit, layers: &mut Vec<El>) -> El {
                 if current {
                     line = line.child(branch_badge("Current"));
                 }
-                line = line.child(branch_menu(s, data, branch, k, layers));
+                line = line.child(branch_menu(s, data, branch, false, k, layers));
                 body = body.child(line).child(divider());
             }
             if data.branches.is_empty() {
@@ -979,6 +986,21 @@ fn detail(s: &Desk, data: &Snapshot, k: &Kit, layers: &mut Vec<El>) -> El {
                     400.0,
                     MUTED,
                 ));
+            }
+            if !data.remotes.is_empty() {
+                body = body.child(heading("Remote-tracking branches", 16.0));
+                for branch in &data.remotes {
+                    let mut line = row().h(42.0).gap(8.0).center_y().child(
+                        label(branch, 14.0, 500.0, INK)
+                            .grow(1.0)
+                            .min_w(0.0)
+                            .truncate(),
+                    );
+                    if !data.bare && data.has_head && data.operation.is_none() {
+                        line = line.child(branch_menu(s, data, branch, true, k, layers));
+                    }
+                    body = body.child(line).child(divider());
+                }
             }
             scroll_list(body)
         }
@@ -1007,10 +1029,18 @@ fn detail(s: &Desk, data: &Snapshot, k: &Kit, layers: &mut Vec<El>) -> El {
     }
 }
 
-fn branch_menu(s: &Desk, data: &Snapshot, branch: &str, k: &Kit, layers: &mut Vec<El>) -> El {
+fn branch_menu(
+    s: &Desk,
+    data: &Snapshot,
+    branch: &str,
+    remote: bool,
+    k: &Kit,
+    layers: &mut Vec<El>,
+) -> El {
     let name = branch.to_owned();
-    let menu_name = name.clone();
-    let current = branch == data.branch;
+    let source = format!("refs/{}/{branch}", if remote { "remotes" } else { "heads" });
+    let menu_name = source.clone();
+    let current = !remote && branch == data.branch;
     let trigger = button("Actions")
         .variant(ButtonVariant::Outline)
         .icon(k.glyph.chevron_down)
@@ -1024,23 +1054,42 @@ fn branch_menu(s: &Desk, data: &Snapshot, branch: &str, k: &Kit, layers: &mut Ve
             };
         })
         .build(k)
-        .key(format!("branch-actions-{branch}"));
-    let mut menu = Menu::new(format!("branch-menu-{branch}"))
+        .key(format!("branch-actions-{source}"));
+    let mut menu = Menu::new(format!("branch-menu-{source}"))
         .trigger(trigger)
-        .open(s.branch_menu.as_deref() == Some(branch))
+        .open(s.branch_menu.as_deref() == Some(&source))
         .on_close(|s: &mut Desk| s.branch_menu = None)
         .placement(Placement::TopEnd)
         .min_width(230.0);
-    if !data.bare && !current {
-        for (title, action) in [
-            ("Switch", Action::Switch(name.clone())),
-            ("Merge into current", Action::Merge(name.clone())),
-            ("Rebase current onto this", Action::Rebase(name.clone())),
-        ] {
-            menu = menu
-                .item(MenuItem::new(title).on_select(move |s: &mut Desk| s.act(action.clone())));
+    if !data.bare && !current && data.operation.is_none() {
+        if !remote {
+            let branch = name.clone();
+            menu = menu.item(
+                MenuItem::new("Switch")
+                    .on_select(move |s: &mut Desk| s.act(Action::Switch(branch.clone()))),
+            );
         }
-        menu = menu.separator();
+        if data.has_head {
+            for (title, mode) in [
+                ("Merge into current?", crate::git::IntegrationMode::Merge),
+                (
+                    "Rebase current onto this?",
+                    crate::git::IntegrationMode::Rebase,
+                ),
+            ] {
+                let source = source.clone();
+                menu = menu
+                    .item(MenuItem::new(title).on_select(move |s: &mut Desk| {
+                        s.preview_integration(source.clone(), mode)
+                    }));
+            }
+        }
+        if !remote {
+            menu = menu.separator();
+        }
+    }
+    if remote {
+        return menu.build(k, layers);
     }
     for (title, prompt) in [
         (
@@ -1155,6 +1204,9 @@ pub fn view(s: &Desk, _: &mut Cx<Desk>) -> El {
     let mut layers = Vec::new();
     let mut main = col().grow(1.0).min_h(0.0).px(20.0).py(16.0).gap(12.0);
     if let Some(data) = &w.snapshot {
+        if let Some(op) = data.operation {
+            main = main.child(integration::recovery(s, data, op, &k));
+        }
         main = main.child(detail(s, data, &k, &mut layers));
     } else {
         let hint = "Repository could not be read.";

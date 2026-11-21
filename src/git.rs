@@ -3,6 +3,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+mod integration;
+pub use integration::{Integration, IntegrationMode, Recovery};
 mod history_actions;
 pub use history_actions::{Checkout, HistoryAction, Operation, ResetMode};
 mod tags;
@@ -51,7 +53,9 @@ fn run_git(repo: &Path, args: &[&OsStr], input: Option<&[u8]>) -> Result<Vec<u8>
         use std::os::windows::process::CommandExt;
         git.creation_flags(0x08000000); // CREATE_NO_WINDOW
     }
-    git.current_dir(repo).env("GIT_TERMINAL_PROMPT", "0");
+    git.current_dir(repo)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_EDITOR", "true");
     for key in REPO_ENV {
         git.env_remove(key);
     }
@@ -147,6 +151,7 @@ pub struct Snapshot {
     pub changes: Vec<Change>,
     pub history: Vec<Commit>,
     pub branches: Vec<String>,
+    pub remotes: Vec<String>,
     pub stashes: Vec<Stash>,
     pub tags: Vec<Tag>,
     pub worktrees: Vec<Worktree>,
@@ -261,26 +266,12 @@ fn changes(repo: &Path) -> Result<Vec<Change>> {
     Ok(changes)
 }
 
-fn local_branches(repo: &Path) -> Result<Vec<String>> {
-    Ok(output(
-        repo,
-        &[
-            "for-each-ref",
-            "--format=%(refname:lstrip=2)",
-            "refs/heads/",
-        ],
-    )?
-    .lines()
-    .map(str::to_owned)
-    .collect())
-}
-
 pub fn snapshot(repo: &Path) -> Result<Snapshot> {
     let bare = output(repo, &["rev-parse", "--is-bare-repository"])? == "true";
     std::thread::scope(|scope| {
         let worktrees = scope.spawn(|| worktrees::list(repo));
         let tags = scope.spawn(|| tags::list(repo));
-        let branches = scope.spawn(|| local_branches(repo));
+        let branches = scope.spawn(|| comparison_branches(repo));
         let changes = (!bare).then(|| scope.spawn(|| changes(repo)));
         let stashes = (!bare).then(|| scope.spawn(|| stashes(repo)));
         let operation = scope.spawn(|| history_actions::operation(repo));
@@ -301,6 +292,7 @@ pub fn snapshot(repo: &Path) -> Result<Snapshot> {
                 )
             });
         let history = history(repo, has_head);
+        let refs = branches.join().unwrap()?;
         Ok(Snapshot {
             branch,
             checkout,
@@ -309,7 +301,14 @@ pub fn snapshot(repo: &Path) -> Result<Snapshot> {
             has_head,
             changes: changes.map_or_else(|| Ok(Vec::new()), |job| job.join().unwrap())?,
             history: history?,
-            branches: branches.join().unwrap()?,
+            branches: refs
+                .iter()
+                .filter_map(|r| r.strip_prefix("heads/").map(str::to_owned))
+                .collect(),
+            remotes: refs
+                .iter()
+                .filter_map(|r| r.strip_prefix("remotes/").map(str::to_owned))
+                .collect(),
             tags: tags.join().unwrap()?,
             worktrees: worktrees.join().unwrap()?,
             stashes: stashes.map_or_else(|| Ok(Vec::new()), |job| job.join().unwrap())?,
@@ -341,8 +340,8 @@ pub enum Action {
     CreateBranchFrom(String, String),
     RenameBranch(String, String),
     DeleteBranch(String),
-    Merge(String),
-    Rebase(String),
+    Integrate(Integration),
+    Recover(Operation, Recovery),
     CreateTag {
         name: String,
         target: String,
@@ -382,8 +381,8 @@ impl Action {
             Self::CreateBranchFrom(..) => "Create branch",
             Self::RenameBranch(..) => "Rename branch",
             Self::DeleteBranch(_) => "Delete branch",
-            Self::Merge(_) => "Merge branch",
-            Self::Rebase(_) => "Rebase branch",
+            Self::Integrate(plan) => plan.mode.label(),
+            Self::Recover(_, recovery) => recovery.label(),
             Self::CreateTag { .. } => "Create tag",
             Self::DeleteTag(_) => "Delete tag",
             Self::AddWorktree { .. } => "Add worktree",
@@ -491,17 +490,8 @@ impl Action {
             Self::DeleteBranch(branch) => {
                 return output(repo, &["branch", "-d", "--", branch]).map(|_| ());
             }
-            Self::Merge(branch) => {
-                return output(
-                    repo,
-                    &["merge", "--no-edit", "--", &format!("refs/heads/{branch}")],
-                )
-                .map(|_| ());
-            }
-            Self::Rebase(branch) => {
-                return output(repo, &["rebase", "--", &format!("refs/heads/{branch}")])
-                    .map(|_| ());
-            }
+            Self::Integrate(plan) => return plan.apply(repo),
+            Self::Recover(operation, recovery) => return operation.recover(repo, *recovery),
             Self::CreateTag {
                 name,
                 target,

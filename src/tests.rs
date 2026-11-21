@@ -92,7 +92,12 @@ fn branch_actions_create_merge_and_rebase_current_branch() {
     fixture_git(repo, &["add", "."]);
     fixture_git(repo, &["commit", "-m", "topic"]);
     fixture_git(repo, &["switch", "main"]);
-    git::Action::Merge("topic".into()).apply(repo).unwrap();
+    Action::Integrate(
+        git::Integration::preview(repo, "refs/heads/topic".into(), git::IntegrationMode::Merge)
+            .unwrap(),
+    )
+    .apply(repo)
+    .unwrap();
     assert!(repo.join("topic").exists());
     git::Action::CreateBranch("feature".into())
         .apply(repo)
@@ -104,7 +109,12 @@ fn branch_actions_create_merge_and_rebase_current_branch() {
     fs::write(repo.join("feature"), "feature").unwrap();
     fixture_git(repo, &["add", "."]);
     fixture_git(repo, &["commit", "-m", "feature"]);
-    git::Action::Rebase("main".into()).apply(repo).unwrap();
+    Action::Integrate(
+        git::Integration::preview(repo, "refs/heads/main".into(), git::IntegrationMode::Rebase)
+            .unwrap(),
+    )
+    .apply(repo)
+    .unwrap();
     assert_eq!(
         fixture_git(repo, &["rev-parse", "HEAD^"]),
         fixture_git(repo, &["rev-parse", "main"])
@@ -827,4 +837,78 @@ fn history_actions_squash_through_root_preserve_edits_and_reject_stale_resets() 
     .unwrap();
     assert!(!repo.join("three").exists());
     assert_eq!(fixture_git(repo, &["rev-parse", "HEAD^"]), last);
+}
+
+#[test]
+fn branch_preview_and_conflict_recovery_through_the_ui() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init(repo);
+    fs::write(repo.join("file"), "base").unwrap();
+    fixture_git(repo, &["add", "."]);
+    fixture_git(repo, &["commit", "-m", "base"]);
+    fixture_git(repo, &["switch", "-c", "topic"]);
+    fs::write(repo.join("file"), "topic").unwrap();
+    fixture_git(repo, &["commit", "-am", "topic"]);
+    fixture_git(repo, &["switch", "main"]);
+    fs::write(repo.join("file"), "main").unwrap();
+    fixture_git(repo, &["commit", "-am", "main"]);
+    let main = fixture_git(repo, &["rev-parse", "HEAD"]);
+    let mut rt = Runtime::new(
+        Desk::new(Some(repo.into())),
+        view::view,
+        MIN_WINDOW_SIZE,
+        Env {
+            system_dark: false,
+            scale: 1.0,
+        },
+    );
+    rt.poll = Some(|s, _, _| s.poll());
+    settle(&mut rt);
+    click(&mut rt, "tab-Branches");
+    click(&mut rt, "branch-actions-refs/heads/topic");
+    click(&mut rt, "branch-menu-refs/heads/topic-item1");
+    let plan = rt.state.integration.as_ref().unwrap().clone();
+    assert_eq!((plan.ours, plan.theirs), (1, 1));
+    click(&mut rt, "confirm-integration");
+    assert!(rt.state.tab == Tab::Changes);
+    assert_eq!(
+        rt.state.workspace.snapshot.as_ref().unwrap().operation,
+        Some(git::Operation::Merge)
+    );
+    click(&mut rt, "Abort");
+    click(&mut rt, "confirm-recovery");
+    assert_eq!(fixture_git(repo, &["rev-parse", "HEAD"]), main);
+    assert_eq!(fs::read_to_string(repo.join("file")).unwrap(), "main");
+    for recovery in [git::Recovery::Abort, git::Recovery::Skip] {
+        let rebase = git::Integration::preview(
+            repo,
+            "refs/heads/topic".into(),
+            git::IntegrationMode::RebaseMerges,
+        )
+        .unwrap();
+        assert!(Action::Integrate(rebase).apply(repo).is_err());
+        assert_eq!(
+            git::snapshot(repo).unwrap().operation,
+            Some(git::Operation::Rebase)
+        );
+        Action::Recover(git::Operation::Rebase, recovery)
+            .apply(repo)
+            .unwrap();
+        assert_eq!(git::snapshot(repo).unwrap().operation, None);
+    }
+    fixture_git(repo, &["reset", "--hard", &main]);
+    assert!(Action::Integrate(plan).apply(repo).is_err());
+    fs::write(repo.join("file"), "resolved").unwrap();
+    click(&mut rt, "refresh");
+    click(&mut rt, "Stage-file");
+    click(&mut rt, "continue-operation");
+    assert_eq!(
+        rt.state.workspace.snapshot.as_ref().unwrap().operation,
+        None
+    );
+    assert_eq!(
+        fixture_git(repo, &["rev-parse", "HEAD^2"]),
+        fixture_git(repo, &["rev-parse", "topic"])
+    );
 }

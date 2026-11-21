@@ -126,6 +126,7 @@ enum Update {
         outcome: git::Result<String>,
         completed: Option<Action>,
     },
+    IntegrationPreview(git::Result<git::Integration>),
     Diff(git::Result<String>),
     ComparisonBranches(git::Result<Vec<String>>),
 }
@@ -220,6 +221,8 @@ struct Desk {
     selected_commit: Option<git::Commit>,
     history_form: Option<view::HistoryForm>,
     history_menu: bool,
+    integration: Option<git::Integration>,
+    recovery: Option<(git::Operation, git::Recovery)>,
     comparison: BranchComparison,
     opening: bool,
     path: TextEdit,
@@ -268,6 +271,8 @@ impl Desk {
             selected_commit: None,
             history_form: None,
             history_menu: false,
+            integration: None,
+            recovery: None,
             comparison: BranchComparison::default(),
             task: Latest::default(),
             busy: false,
@@ -543,6 +548,11 @@ impl Desk {
             }
             return false;
         }
+        if pressed("escape")
+            && (self.integration.take().is_some() || self.recovery.take().is_some())
+        {
+            return true;
+        }
         if pressed("escape") && self.history_form.take().is_some() {
             return true;
         }
@@ -579,6 +589,8 @@ impl Desk {
             return;
         }
         self.history_form = None;
+        self.integration = None;
+        self.recovery = None;
         self.tab = tab;
         self.comparison.picker = None;
         if tab == Tab::GitHub {
@@ -685,6 +697,8 @@ impl Desk {
                     self.github_thread = None;
                     self.comparison = BranchComparison::default();
                     self.history_form = None;
+                    self.integration = None;
+                    self.recovery = None;
                     self.selected_commit = None;
                     self.tab = Tab::Changes;
                 }
@@ -794,11 +808,20 @@ impl Desk {
                 ) {
                     self.branch_prompt = None;
                 }
+                if matches!(completed, Some(Action::Integrate(_))) {
+                    self.integration = None;
+                }
+                self.recovery = None;
                 self.workspace.notice = outcome.unwrap_or_else(|e| e);
                 self.workspace.snapshot = snapshot
                     .map_err(|e| self.workspace.notice.push_str(&format!(" {e}")))
                     .ok();
                 if let Some(snapshot) = &self.workspace.snapshot {
+                    if snapshot.operation.is_some()
+                        && (self.integration.take().is_some() || self.history_form.is_some())
+                    {
+                        self.tab = Tab::Changes;
+                    }
                     if !snapshot.has_head {
                         self.commit_options.amend = false;
                     }
@@ -827,6 +850,13 @@ impl Desk {
                     self.tab = Tab::Changes;
                 }
             }
+            Update::IntegrationPreview(result) => match result {
+                Ok(plan) => {
+                    self.integration = Some(plan);
+                    self.workspace.notice.clear();
+                }
+                Err(error) => self.workspace.notice = error,
+            },
             Update::Diff(result) => match result {
                 Ok(patch) => {
                     self.patch = patch;
