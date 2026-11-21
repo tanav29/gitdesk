@@ -3,6 +3,9 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+mod tags;
+pub use tags::Tag;
+
 pub type Result<T> = std::result::Result<T, String>;
 
 pub fn repository_path(path: &Path) -> Result<PathBuf> {
@@ -139,6 +142,7 @@ pub struct Snapshot {
     pub history: Vec<Commit>,
     pub branches: Vec<String>,
     pub stashes: Vec<Stash>,
+    pub tags: Vec<Tag>,
 }
 
 #[derive(Clone)]
@@ -267,6 +271,7 @@ fn local_branches(repo: &Path) -> Result<Vec<String>> {
 pub fn snapshot(repo: &Path) -> Result<Snapshot> {
     let bare = output(repo, &["rev-parse", "--is-bare-repository"])? == "true";
     std::thread::scope(|scope| {
+        let tags = scope.spawn(|| tags::list(repo));
         let branches = scope.spawn(|| local_branches(repo));
         let changes = (!bare).then(|| scope.spawn(|| changes(repo)));
         let stashes = (!bare).then(|| scope.spawn(|| stashes(repo)));
@@ -284,6 +289,7 @@ pub fn snapshot(repo: &Path) -> Result<Snapshot> {
             changes: changes.map_or_else(|| Ok(Vec::new()), |job| job.join().unwrap())?,
             history: history?,
             branches: branches.join().unwrap()?,
+            tags: tags.join().unwrap()?,
             stashes: stashes.map_or_else(|| Ok(Vec::new()), |job| job.join().unwrap())?,
         })
     })
@@ -315,6 +321,12 @@ pub enum Action {
     DeleteBranch(String),
     Merge(String),
     Rebase(String),
+    CreateTag {
+        name: String,
+        target: String,
+        message: String,
+    },
+    DeleteTag(Tag),
     Fetch,
     Pull,
     Push,
@@ -337,6 +349,8 @@ impl Action {
             Self::DeleteBranch(_) => "Delete branch",
             Self::Merge(_) => "Merge branch",
             Self::Rebase(_) => "Rebase branch",
+            Self::CreateTag { .. } => "Create tag",
+            Self::DeleteTag(_) => "Delete tag",
             Self::Fetch => "Fetch",
             Self::Pull => "Pull",
             Self::Push => "Push",
@@ -448,6 +462,12 @@ impl Action {
                 return output(repo, &["rebase", "--", &format!("refs/heads/{branch}")])
                     .map(|_| ());
             }
+            Self::CreateTag {
+                name,
+                target,
+                message,
+            } => return tags::create(repo, name, target, message),
+            Self::DeleteTag(tag) => return tags::delete(repo, tag),
             Self::Fetch => return output(repo, &["fetch"]).map(|_| ()),
             Self::Pull => return output(repo, &["pull", "--ff-only"]).map(|_| ()),
             Self::Push => return output(repo, &["push"]).map(|_| ()),

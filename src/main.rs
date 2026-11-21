@@ -35,6 +35,7 @@ enum Tab {
     Stashes,
     Settings,
     GitHub,
+    Tags,
 }
 
 #[derive(Default)]
@@ -50,6 +51,14 @@ struct ConfigForm {
     entries: Entries,
     key: TextEdit,
     value: TextEdit,
+}
+
+#[derive(Default)]
+struct TagForm {
+    name: TextEdit,
+    target: TextEdit,
+    message: TextEdit,
+    deleting: Option<git::Tag>,
 }
 
 struct StashForm {
@@ -105,10 +114,7 @@ enum Update {
         path: PathBuf,
         snapshot: git::Result<Snapshot>,
         outcome: git::Result<String>,
-        committed: bool,
-        stashed: bool,
-        branch_created: bool,
-        branch_prompt_done: bool,
+        completed: Option<Action>,
     },
     Diff(git::Result<String>),
     ComparisonBranches(git::Result<Vec<String>>),
@@ -210,6 +216,7 @@ struct Desk {
     branch_prompt: Option<BranchPrompt>,
     branch_prompt_name: TextEdit,
     config: ConfigForm,
+    tags: TagForm,
     stash: StashForm,
     github_section: github::Section,
     github_entries: Vec<github::Entry>,
@@ -230,6 +237,7 @@ impl Desk {
             branch_prompt: None,
             branch_prompt_name: TextEdit::new(""),
             config: ConfigForm::default(),
+            tags: TagForm::default(),
             stash: StashForm::default(),
             github_section: github::Section::default(),
             github_entries: Vec::new(),
@@ -412,27 +420,13 @@ impl Desk {
                 || Ok(String::new()),
                 |a| a.apply(&path).map(|()| format!("{} complete.", a.label())),
             );
-            let committed = matches!(action, Some(Action::Commit(..))) && outcome.is_ok();
-            let stashed = matches!(action, Some(Action::Stash(..))) && outcome.is_ok();
-            let branch_created =
-                matches!(action, Some(Action::CreateBranch(..))) && outcome.is_ok();
-            let branch_prompt_done = matches!(
-                action,
-                Some(
-                    Action::RenameBranch(..)
-                        | Action::CreateBranchFrom(..)
-                        | Action::DeleteBranch(..)
-                )
-            ) && outcome.is_ok();
+            let completed = action.filter(|_| outcome.is_ok());
             let snapshot = git::snapshot(&path);
             Update::Repository {
                 path,
                 snapshot,
                 outcome,
-                committed,
-                stashed,
-                branch_created,
-                branch_prompt_done,
+                completed,
             }
         });
     }
@@ -489,7 +483,7 @@ impl Desk {
         }
     }
 
-    fn tabs(&self) -> [(&'static str, Tab); 7] {
+    fn tabs(&self) -> [(&'static str, Tab); 8] {
         let diff = if self.selected_commit.is_some() {
             DiffMode::Commit
         } else if self
@@ -510,6 +504,7 @@ impl Desk {
             ("Stashes", Tab::Stashes),
             ("Settings", Tab::Settings),
             ("GitHub", Tab::GitHub),
+            ("Tags", Tab::Tags),
         ]
     }
 
@@ -548,7 +543,7 @@ impl Desk {
             .as_ref()
             .is_some_and(|data| data.bare);
         for ((_, tab), shortcut) in self.tabs().into_iter().zip([
-            "mod+1", "mod+2", "mod+3", "mod+4", "mod+5", "mod+6", "mod+7",
+            "mod+1", "mod+2", "mod+3", "mod+4", "mod+5", "mod+6", "mod+7", "mod+8",
         ]) {
             if !(bare && matches!(tab, Tab::Changes | Tab::Stashes)) && pressed(shortcut) {
                 self.select_tab(tab);
@@ -657,6 +652,7 @@ impl Desk {
                     self.selected_changes = Default::default();
                     self.commit_options = CommitOptions::default();
                     self.config = ConfigForm::default();
+                    self.tags = TagForm::default();
                     self.stash = StashForm::default();
                     self.branch_name = TextEdit::new("");
                     self.branch_menu = None;
@@ -738,24 +734,34 @@ impl Desk {
                 path,
                 snapshot,
                 outcome,
-                committed,
-                stashed,
-                branch_created,
-                branch_prompt_done,
+                completed,
             } => {
                 self.swap_draft(Some(&path));
                 self.workspace.selected = Some(path);
-                if committed {
+                if matches!(completed, Some(Action::Commit(..))) {
                     self.draft = TextEdit::new("");
                     self.commit_options = CommitOptions::default();
                 }
-                if stashed {
+                if matches!(completed, Some(Action::Stash(..))) {
                     self.stash.message = TextEdit::new("");
                 }
-                if branch_created {
+                if matches!(completed, Some(Action::CreateBranch(..))) {
                     self.branch_name = TextEdit::new("");
                 }
-                if branch_prompt_done {
+                if matches!(
+                    completed,
+                    Some(Action::CreateTag { .. } | Action::DeleteTag(..))
+                ) {
+                    self.tags = TagForm::default();
+                }
+                if matches!(
+                    completed,
+                    Some(
+                        Action::RenameBranch(..)
+                            | Action::CreateBranchFrom(..)
+                            | Action::DeleteBranch(..)
+                    )
+                ) {
                     self.branch_prompt = None;
                 }
                 self.workspace.notice = outcome.unwrap_or_else(|e| e);

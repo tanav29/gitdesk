@@ -662,3 +662,35 @@ fn github_keeps_the_comment_draft_when_inspecting_changed_files() {
     click(&mut rt, "github-back");
     assert!(rt.find("github-details-42").is_some());
 }
+
+#[test]
+fn tags_create_at_an_explicit_commit_and_protect_replaced_tags() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init(repo);
+    fixture_git(repo, &["commit", "--allow-empty", "-m", "first"]);
+    fixture_git(repo, &["commit", "--allow-empty", "-m", "second"]);
+    for (name, target, message) in [("v1", "HEAD^", "First release"), ("latest", "", "")] {
+        Action::CreateTag {
+            name: name.into(),
+            target: target.into(),
+            message: message.into(),
+        }
+        .apply(repo)
+        .unwrap();
+    }
+    let tags = git::snapshot(repo).unwrap().tags;
+    let release = tags.iter().find(|t| t.name == "v1").unwrap();
+    assert!(release.annotated);
+    assert_eq!(release.subject, "First release");
+    assert_eq!(
+        release.short_target,
+        fixture_git(repo, &["rev-parse", "--short", "HEAD^"])
+    );
+    let latest = tags.iter().find(|t| t.name == "latest").unwrap();
+    assert!(!latest.annotated);
+    fixture_git(repo, &["tag", "-f", "latest", "HEAD^"]);
+    assert!(Action::DeleteTag(latest.clone()).apply(repo).is_err());
+    Action::DeleteTag(release.clone()).apply(repo).unwrap();
+    assert_eq!(fixture_git(repo, &["tag", "--list"]), "latest");
+}
