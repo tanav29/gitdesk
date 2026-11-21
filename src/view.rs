@@ -12,13 +12,13 @@ mod history;
 mod stashes;
 
 const PAGE: &str = "#ffffff";
-const RAIL: &str = "#f5f7fa";
-const HOVER: &str = "#edf1f6";
-const SELECTED: &str = "#e8efff";
-pub(crate) const INK: &str = "#172437";
-pub(crate) const MUTED: &str = "#526176";
-pub(crate) const ACCENT: &str = "#254eb3";
-pub(crate) const RULE: &str = "#dce3ec";
+const RAIL: &str = "#f6f8fb";
+const HOVER: &str = "#edf2f8";
+const SELECTED: &str = "#e8effd";
+pub(crate) const INK: &str = "#1b293b";
+pub(crate) const MUTED: &str = "#526278";
+pub(crate) const ACCENT: &str = "#2451b8";
+pub(crate) const RULE: &str = "#dce4ee";
 const ADDED: &str = "#21623e";
 const REMOVED: &str = "#a3323a";
 
@@ -76,6 +76,7 @@ fn branch_badge(title: &str) -> El {
         .center_y()
         .radius(5.0)
         .fill(color(SELECTED))
+        .help(title)
         .child(label(title, 12.0, 600.0, ACCENT).truncate())
 }
 fn scroll_list(body: El) -> El {
@@ -235,7 +236,7 @@ fn sidebar(s: &Desk, k: &Kit) -> El {
             .help(title)
             .help_keys([super::PRIMARY_KEY, &(index + 1).to_string()])
             .focusable(!s.busy)
-            .radius(5.0)
+            .radius(10.0)
             .focus_ring(2.0, 0.0, color(ACCENT))
             .hover(color(if active { SELECTED } else { HOVER }))
             .fill(if active {
@@ -266,7 +267,7 @@ fn sidebar(s: &Desk, k: &Kit) -> El {
         .child(divider())
         .child(el().h(3.0))
         .child(
-            button("Open repository…")
+            button("Open repository")
                 .disabled(s.busy)
                 .on_press(Desk::show_opener)
                 .build(k)

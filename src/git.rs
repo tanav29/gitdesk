@@ -63,10 +63,13 @@ fn run_git(repo: &Path, args: &[&OsStr], input: Option<&[u8]>) -> Result<Vec<u8>
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| format!("Could not start Git: {e}"))?;
-        let written = child.stdin.take().unwrap().write_all(input);
-        let output = child
-            .wait_with_output()
-            .map_err(|e| format!("Could not read Git result: {e}"))?;
+        let mut stdin = child.stdin.take().unwrap();
+        let (output, written) = std::thread::scope(|scope| {
+            let writer = scope.spawn(move || stdin.write_all(input));
+            let output = child.wait_with_output();
+            (output, writer.join().unwrap())
+        });
+        let output = output.map_err(|e| format!("Could not read Git result: {e}"))?;
         (output, written)
     } else {
         (
@@ -267,8 +270,11 @@ pub fn snapshot(repo: &Path) -> Result<Snapshot> {
         let branches = scope.spawn(|| local_branches(repo));
         let changes = (!bare).then(|| scope.spawn(|| changes(repo)));
         let stashes = (!bare).then(|| scope.spawn(|| stashes(repo)));
+        let branch = scope.spawn(|| output(repo, &["symbolic-ref", "--short", "-q", "HEAD"]));
         let head = output(repo, &["rev-parse", "--verify", "--short", "HEAD"]).ok();
-        let branch = output(repo, &["symbolic-ref", "--short", "-q", "HEAD"])
+        let branch = branch
+            .join()
+            .unwrap()
             .unwrap_or_else(|_| format!("Detached at {}", head.as_deref().unwrap_or("HEAD")));
         let history = history(repo, head.is_some());
         Ok(Snapshot {

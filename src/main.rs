@@ -768,6 +768,9 @@ impl Desk {
 }
 
 fn main() {
+    if let Err(error) = rune::set_app_icon(include_bytes!("../assets/icon.png").as_slice()) {
+        eprintln!("Could not load application icon: {error}");
+    }
     rune::run(AppSpec {
         min_size: Some(MIN_WINDOW_SIZE),
         setup: Some(|s: &mut Desk, waker| {
