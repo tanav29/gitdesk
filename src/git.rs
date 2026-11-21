@@ -3,6 +3,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+mod history_actions;
+pub use history_actions::{Checkout, HistoryAction, Operation, ResetMode};
 mod tags;
 mod worktrees;
 pub use tags::Tag;
@@ -138,6 +140,8 @@ fn file_name(raw: &[u8]) -> Result<OsString> {
 #[derive(Default)]
 pub struct Snapshot {
     pub branch: String,
+    pub checkout: Checkout,
+    pub operation: Option<Operation>,
     pub bare: bool,
     pub has_head: bool,
     pub changes: Vec<Change>,
@@ -279,17 +283,30 @@ pub fn snapshot(repo: &Path) -> Result<Snapshot> {
         let branches = scope.spawn(|| local_branches(repo));
         let changes = (!bare).then(|| scope.spawn(|| changes(repo)));
         let stashes = (!bare).then(|| scope.spawn(|| stashes(repo)));
-        let branch = scope.spawn(|| output(repo, &["symbolic-ref", "--short", "-q", "HEAD"]));
-        let head = output(repo, &["rev-parse", "--verify", "--short", "HEAD"]).ok();
-        let branch = branch
-            .join()
-            .unwrap()
-            .unwrap_or_else(|_| format!("Detached at {}", head.as_deref().unwrap_or("HEAD")));
-        let history = history(repo, head.is_some());
+        let operation = scope.spawn(|| history_actions::operation(repo));
+        let checkout = Checkout::read(repo);
+        let has_head = checkout.id.is_some();
+        let branch = checkout
+            .reference
+            .as_deref()
+            .map(|r| r.trim_start_matches("refs/heads/").to_owned())
+            .unwrap_or_else(|| {
+                format!(
+                    "Detached at {}",
+                    checkout
+                        .id
+                        .as_deref()
+                        .and_then(|id| id.get(..8))
+                        .unwrap_or("HEAD")
+                )
+            });
+        let history = history(repo, has_head);
         Ok(Snapshot {
             branch,
+            checkout,
+            operation: operation.join().unwrap()?,
             bare,
-            has_head: head.is_some(),
+            has_head,
             changes: changes.map_or_else(|| Ok(Vec::new()), |job| job.join().unwrap())?,
             history: history?,
             branches: branches.join().unwrap()?,
@@ -332,6 +349,11 @@ pub enum Action {
         message: String,
     },
     DeleteTag(Tag),
+    History {
+        checkout: Checkout,
+        target: String,
+        action: HistoryAction,
+    },
     AddWorktree {
         path: PathBuf,
         mode: WorktreeMode,
@@ -368,6 +390,7 @@ impl Action {
             Self::RemoveWorktree(_) => "Remove worktree",
             Self::LockWorktree(_, true) => "Lock worktree",
             Self::LockWorktree(_, false) => "Unlock worktree",
+            Self::History { action, .. } => action.label(),
             Self::Fetch => "Fetch",
             Self::Pull => "Pull",
             Self::Push => "Push",
@@ -495,6 +518,11 @@ impl Action {
             Self::LockWorktree(path, locked) => {
                 return worktrees::manage(repo, if *locked { "lock" } else { "unlock" }, path);
             }
+            Self::History {
+                checkout,
+                target,
+                action,
+            } => return action.apply(repo, checkout, target),
             Self::Fetch => return output(repo, &["fetch"]).map(|_| ()),
             Self::Pull => return output(repo, &["pull", "--ff-only"]).map(|_| ()),
             Self::Push => return output(repo, &["push"]).map(|_| ()),

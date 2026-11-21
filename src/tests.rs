@@ -758,3 +758,73 @@ fn linked_worktrees_can_be_created_opened_locked_and_safely_removed() {
             .unwrap();
     }
 }
+
+#[test]
+fn history_actions_squash_through_root_preserve_edits_and_reject_stale_resets() {
+    use git::{HistoryAction, ResetMode};
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init(repo);
+    for name in ["one", "two", "three"] {
+        fs::write(repo.join(name), name).unwrap();
+        fixture_git(repo, &["add", name]);
+        fixture_git(repo, &["commit", "-m", name]);
+    }
+    let snapshot = git::snapshot(repo).unwrap();
+    let root = snapshot.history.last().unwrap().id.clone();
+    let last = snapshot.checkout.id.clone().unwrap();
+    let action = |checkout: git::Checkout, target: &str, action| Action::History {
+        checkout,
+        target: target.to_owned(),
+        action,
+    };
+    fs::write(repo.join("two"), "staged").unwrap();
+    fixture_git(repo, &["add", "two"]);
+    fs::write(repo.join("two"), "unstaged").unwrap();
+    action(
+        snapshot.checkout.clone(),
+        &root,
+        HistoryAction::Squash("combined".into()),
+    )
+    .apply(repo)
+    .unwrap();
+    assert_eq!(fixture_git(repo, &["rev-list", "--count", "HEAD"]), "1");
+    assert_eq!(fixture_git(repo, &["log", "-1", "--format=%s"]), "combined");
+    assert_eq!(fixture_git(repo, &["diff", &last, "HEAD"]), "");
+    assert_eq!(fixture_git(repo, &["show", ":two"]), "staged");
+    assert_eq!(fs::read_to_string(repo.join("two")).unwrap(), "unstaged");
+    assert!(
+        action(
+            snapshot.checkout,
+            &root,
+            HistoryAction::Reset(ResetMode::Hard)
+        )
+        .apply(repo)
+        .is_err()
+    );
+    let reset = |mode, target: &str| {
+        action(
+            git::snapshot(repo).unwrap().checkout,
+            target,
+            HistoryAction::Reset(mode),
+        )
+        .apply(repo)
+        .unwrap()
+    };
+    reset(ResetMode::Soft, &root);
+    assert_eq!(fixture_git(repo, &["show", ":two"]), "staged");
+    reset(ResetMode::Mixed, &last);
+    assert_eq!(fixture_git(repo, &["show", ":two"]), "two");
+    assert_eq!(fs::read_to_string(repo.join("two")).unwrap(), "unstaged");
+    reset(ResetMode::Hard, &last);
+    assert_eq!(fs::read_to_string(repo.join("two")).unwrap(), "two");
+    action(
+        git::snapshot(repo).unwrap().checkout,
+        &last,
+        HistoryAction::Revert { mainline: None },
+    )
+    .apply(repo)
+    .unwrap();
+    assert!(!repo.join("three").exists());
+    assert_eq!(fixture_git(repo, &["rev-parse", "HEAD^"]), last);
+}

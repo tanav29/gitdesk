@@ -9,6 +9,8 @@ use rune_kit::{
 mod diff;
 mod github_thread;
 mod history;
+mod history_actions;
+pub(crate) use history_actions::HistoryForm;
 mod stashes;
 mod tags;
 mod worktrees;
@@ -808,6 +810,7 @@ fn diff_controls(s: &Desk, bare: bool, mode: DiffMode, k: &Kit, layers: &mut Vec
                         .min_w(0.0)
                         .truncate(),
                 )
+                .child(history_actions::menu(s, bare, k, layers))
                 .child(
                     button("Back to History")
                         .disabled(s.busy)
@@ -866,6 +869,9 @@ fn diff_controls(s: &Desk, bare: bool, mode: DiffMode, k: &Kit, layers: &mut Vec
 }
 
 fn detail(s: &Desk, data: &Snapshot, k: &Kit, layers: &mut Vec<El>) -> El {
+    if let Some(form) = &s.history_form {
+        return history_actions::form(s, data, form, k);
+    }
     let mut body = col().gap(4.0);
     match s.tab {
         Tab::Worktrees => worktrees::view(s, data, k),

@@ -218,6 +218,8 @@ struct Desk {
     patch: String,
     diff_pages: usize,
     selected_commit: Option<git::Commit>,
+    history_form: Option<view::HistoryForm>,
+    history_menu: bool,
     comparison: BranchComparison,
     opening: bool,
     path: TextEdit,
@@ -264,6 +266,8 @@ impl Desk {
             patch: String::new(),
             diff_pages: 1,
             selected_commit: None,
+            history_form: None,
+            history_menu: false,
             comparison: BranchComparison::default(),
             task: Latest::default(),
             busy: false,
@@ -281,6 +285,7 @@ impl Desk {
         self.busy = true;
         self.commit_menu_open = false;
         self.branch_menu = None;
+        self.history_menu = false;
         self.workspace.notice = message.to_owned();
         self.task.request((), move |()| job());
     }
@@ -538,6 +543,9 @@ impl Desk {
             }
             return false;
         }
+        if pressed("escape") && self.history_form.take().is_some() {
+            return true;
+        }
         if pressed("escape") && self.branch_prompt.is_some() {
             self.branch_prompt = None;
             return true;
@@ -570,6 +578,7 @@ impl Desk {
         if self.busy {
             return;
         }
+        self.history_form = None;
         self.tab = tab;
         self.comparison.picker = None;
         if tab == Tab::GitHub {
@@ -675,6 +684,7 @@ impl Desk {
                     self.github_entries.clear();
                     self.github_thread = None;
                     self.comparison = BranchComparison::default();
+                    self.history_form = None;
                     self.selected_commit = None;
                     self.tab = Tab::Changes;
                 }
@@ -804,7 +814,16 @@ impl Desk {
                     }
                     self.selected_changes = remaining;
                 }
-                if matches!(self.tab, Tab::Diff(_)) {
+                if matches!(completed, Some(Action::History { .. }))
+                    || self
+                        .workspace
+                        .snapshot
+                        .as_ref()
+                        .is_some_and(|d| d.operation.is_some())
+                {
+                    self.history_form = None;
+                }
+                if matches!(self.tab, Tab::Diff(_)) && self.history_form.is_none() {
                     self.tab = Tab::Changes;
                 }
             }
