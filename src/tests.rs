@@ -482,22 +482,6 @@ fn worktrees_bare_repositories_and_remote_actions() {
     );
 }
 
-fn await_terminal(rt: &mut Runtime<Desk>, ready: impl Fn(&Terminal) -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(15);
-    loop {
-        rt.frame(1.0 / 60.0);
-        if rt.state.shell().is_some_and(&ready) {
-            return;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "Terminal timed out: {:?}",
-            rt.state.shell().map(|t| t.screen(|s| s.contents()))
-        );
-        thread::sleep(Duration::from_millis(25));
-    }
-}
-
 #[test]
 fn compares_local_and_remote_branch_tips_without_switching_branches() {
     let tmp = tempfile::tempdir().unwrap();
@@ -556,7 +540,7 @@ fn compares_local_and_remote_branch_tips_without_switching_branches() {
 }
 
 #[test]
-fn settings_and_interactive_git_use_the_open_repository() {
+fn settings_use_the_open_repository() {
     let tmp = tempfile::tempdir().unwrap();
     let repo = tmp.path().join("repository with spaces");
     init(&repo);
@@ -590,50 +574,6 @@ fn settings_and_interactive_git_use_the_open_repository() {
             .iter()
             .any(|(k, v)| k == "alias.make-topic" && v == "branch")
     );
-
-    fs::write(repo.join("sample.txt"), "one\n").unwrap();
-    Action::Stage(vec!["sample.txt".into()])
-        .apply(&repo)
-        .unwrap();
-    Action::Commit("first".into(), CommitOptions::default())
-        .apply(&repo)
-        .unwrap();
-    fs::write(repo.join("sample.txt"), "two\n").unwrap();
-    click(&mut rt, "tab-Terminal");
-    await_terminal(&mut rt, |s| s.screen(|sc| !sc.contents().trim().is_empty()));
-    click(&mut rt, "terminal-screen");
-    for ch in "git -c color.ui=false add -p".chars() {
-        rt.key(rune::KeyEvent {
-            key: rune::Key::Text(ch.to_string()),
-            mods: Default::default(),
-        });
-    }
-    rt.key(rune::KeyEvent {
-        key: rune::Key::Enter,
-        mods: Default::default(),
-    });
-    await_terminal(&mut rt, |s| {
-        s.screen(|sc| sc.contents().contains("Stage this hunk"))
-    });
-    rt.key(rune::KeyEvent {
-        key: rune::Key::Text("y".into()),
-        mods: Default::default(),
-    });
-    rt.key(rune::KeyEvent {
-        key: rune::Key::Enter,
-        mods: Default::default(),
-    });
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while git::diff(&repo, true).unwrap().is_empty() {
-        assert!(
-            Instant::now() < deadline,
-            "interactive staging did not finish"
-        );
-        rt.frame(1.0 / 60.0);
-        thread::sleep(Duration::from_millis(25));
-    }
-    click(&mut rt, "tab-Changes");
-    assert!(rt.state.workspace.snapshot.as_ref().unwrap().changes[0].staged());
 }
 
 #[test]

@@ -29,9 +29,8 @@ Use Ctrl on Windows and Linux, or Command on macOS.
 | --- | --- |
 | Ctrl/Command + O | Open a repository |
 | Esc | Cancel the repository picker when a repository is open |
-| Ctrl/Command + 1 through 8 | Changes, Diff, History, Branches, Stashes, Settings, GitHub, Terminal |
+| Ctrl/Command + 1 through 7 | Changes, Diff, History, Branches, Stashes, Settings, GitHub |
 | F5 | Refresh the current view |
-| Ctrl + F6 | Move focus from the terminal to navigation |
 
 ## Working with a repository
 
@@ -41,7 +40,7 @@ The **More** menu beside the commit button lets you add a signed-off-by trailer,
 
 In **Stashes**, save staged and unstaged changes with an optional message. Check **Include untracked files** to save new files too. **Apply** restores the changes and keeps the stash. **Pop** removes the stash after a successful restore. **Restore staged state** is on by default.
 
-**Diff** shows tracked changes in the working tree or index. **History** graphs up to 40 commits reachable from local branches, remote-tracking branches, and the current HEAD. Select a commit to open its patch in **Diff**. Merge commits are compared with their first parent. In **Branches**, use a branch's **Actions** menu to switch, create another branch from it, rename it, delete it, merge it into the current branch, or rebase the current branch onto it. Deletion requires confirmation and Git refuses to delete unmerged branches. Git reports conflicts in the window; use the terminal to resolve them and continue or abort the operation.
+**Diff** shows tracked changes in the working tree or index. **History** graphs up to 40 commits reachable from local branches, remote-tracking branches, and the current HEAD. Select a commit to open its patch in **Diff**. Merge commits are compared with their first parent. In **Branches**, use a branch's **Actions** menu to switch, create another branch from it, rename it, delete it, merge it into the current branch, or rebase the current branch onto it. Deletion requires confirmation and Git refuses to delete unmerged branches. Git reports conflicts in the window; use an external terminal to resolve them and continue or abort the operation.
 
 In **Diff → Compare branches**, choose a base and a comparison branch to view the changes from the base tip to the comparison tip. The pickers include local and remote-tracking branches. Use **Fetch** to update remote-tracking branches.
 
@@ -51,4 +50,4 @@ In **Diff → Compare branches**, choose a base and a comparison branch to view 
 
 **GitHub** shows open pull requests, open issues, and recent Actions runs for the repository. Choose **View details** on a pull request or issue to read its description and comments or post a comment. On a pull request, **Files changed** shows the diff with line numbers. **Open on GitHub** opens the original item in your browser. Install GitHub CLI on PATH and sign in with `gh auth login` to use these views.
 
-**Terminal** starts a shell in the repository directory for any Git or GitHub CLI command.
+Use **Open in** next to Refresh to open the repository in your file manager, a system terminal, or Visual Studio Code.

@@ -1,7 +1,5 @@
 mod git;
 mod github;
-mod terminal;
-mod terminal_view;
 #[cfg(test)]
 mod tests;
 mod view;
@@ -11,7 +9,6 @@ use rune::{AppSpec, Chord, KeyEvent, Latest, TextEdit, Tx};
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use terminal::Terminal;
 
 const PRIMARY_KEY: &str = if cfg!(target_os = "macos") {
     "⌘"
@@ -38,7 +35,6 @@ enum Tab {
     Stashes,
     Settings,
     GitHub,
-    Terminal,
 }
 
 #[derive(Default)]
@@ -105,7 +101,6 @@ enum Update {
     GitHubConversation(git::Result<github::Conversation>),
     GitHubComment(git::Result<git::Result<github::Conversation>>),
     GitHubDiff(git::Result<String>),
-    Terminal(git::Result<Terminal>),
     Repository {
         path: PathBuf,
         snapshot: git::Result<Snapshot>,
@@ -117,6 +112,83 @@ enum Update {
     },
     Diff(git::Result<String>),
     ComparisonBranches(git::Result<Vec<String>>),
+}
+
+#[derive(Clone, Copy)]
+enum ExternalTarget {
+    FileManager,
+    Terminal,
+    Editor,
+}
+
+impl ExternalTarget {
+    fn label(self) -> &'static str {
+        match self {
+            Self::FileManager => "file manager",
+            Self::Terminal => "terminal",
+            Self::Editor => "VS Code",
+        }
+    }
+}
+
+fn launch_external(path: &Path, target: ExternalTarget) -> std::io::Result<()> {
+    use std::process::Command;
+    #[cfg(target_os = "windows")]
+    let mut command = match target {
+        ExternalTarget::FileManager => {
+            let mut c = Command::new("explorer.exe");
+            c.arg(path);
+            c
+        }
+        ExternalTarget::Terminal => {
+            let mut c = Command::new("cmd.exe");
+            c.args(["/c", "start", "", "cmd.exe"]);
+            c.current_dir(path);
+            c
+        }
+        ExternalTarget::Editor => {
+            let mut c = Command::new("code.cmd");
+            c.arg(path);
+            c
+        }
+    };
+    #[cfg(target_os = "macos")]
+    let mut command = match target {
+        ExternalTarget::FileManager => {
+            let mut c = Command::new("open");
+            c.arg(path);
+            c
+        }
+        ExternalTarget::Terminal => {
+            let mut c = Command::new("open");
+            c.args(["-a", "Terminal"]).arg(path);
+            c
+        }
+        ExternalTarget::Editor => {
+            let mut c = Command::new("open");
+            c.args(["-a", "Visual Studio Code"]).arg(path);
+            c
+        }
+    };
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let mut command = match target {
+        ExternalTarget::FileManager => {
+            let mut c = Command::new("xdg-open");
+            c.arg(path);
+            c
+        }
+        ExternalTarget::Terminal => {
+            let mut c = Command::new("x-terminal-emulator");
+            c.current_dir(path);
+            c
+        }
+        ExternalTarget::Editor => {
+            let mut c = Command::new("code");
+            c.arg(path);
+            c
+        }
+    };
+    command.spawn().map(|_| ())
 }
 
 struct Desk {
@@ -142,8 +214,7 @@ struct Desk {
     github_section: github::Section,
     github_entries: Vec<github::Entry>,
     github_thread: Option<GitHubThread>,
-    shells: HashMap<PathBuf, Terminal>,
-    waker: Option<rune::Waker>,
+    open_menu: bool,
     task: Latest<Update>,
     busy: bool,
 }
@@ -163,8 +234,7 @@ impl Desk {
             github_section: github::Section::default(),
             github_entries: Vec::new(),
             github_thread: None,
-            shells: HashMap::new(),
-            waker: None,
+            open_menu: false,
             tab: Tab::Changes,
             draft: TextEdit::new(""),
             drafts: HashMap::new(),
@@ -210,10 +280,6 @@ impl Desk {
         if !path.is_empty() {
             self.open(PathBuf::from(path));
         }
-    }
-
-    fn shell(&self) -> Option<&Terminal> {
-        self.shells.get(self.workspace.selected.as_ref()?)
     }
 
     fn load_github(&mut self, section: github::Section) {
@@ -306,20 +372,15 @@ impl Desk {
         });
     }
 
-    fn start_shell(&mut self) {
-        let Some(path) = self.workspace.selected.clone() else {
+    fn open_external(&mut self, target: ExternalTarget) {
+        self.open_menu = false;
+        let Some(path) = self.workspace.selected.as_deref() else {
             return;
         };
-        if self.shell().is_some_and(|t| t.ended.is_none()) {
-            return;
-        }
-        let wake = self
-            .waker
-            .clone()
-            .unwrap_or_else(|| std::sync::Arc::new(|| {}));
-        self.start("Opening terminal…", move || {
-            Update::Terminal(Terminal::open(&path, wake))
-        });
+        self.workspace.notice = launch_external(path, target)
+            .err()
+            .map(|error| format!("Could not open {}: {error}", target.label()))
+            .unwrap_or_default();
     }
 
     fn settings(&mut self, scope: Scope, edit: Option<ConfigEdit>) {
@@ -428,7 +489,7 @@ impl Desk {
         }
     }
 
-    fn tabs(&self) -> [(&'static str, Tab); 8] {
+    fn tabs(&self) -> [(&'static str, Tab); 7] {
         let diff = if self.selected_commit.is_some() {
             DiffMode::Commit
         } else if self
@@ -449,7 +510,6 @@ impl Desk {
             ("Stashes", Tab::Stashes),
             ("Settings", Tab::Settings),
             ("GitHub", Tab::GitHub),
-            ("Terminal", Tab::Terminal),
         ]
     }
 
@@ -488,7 +548,7 @@ impl Desk {
             .as_ref()
             .is_some_and(|data| data.bare);
         for ((_, tab), shortcut) in self.tabs().into_iter().zip([
-            "mod+1", "mod+2", "mod+3", "mod+4", "mod+5", "mod+6", "mod+7", "mod+8",
+            "mod+1", "mod+2", "mod+3", "mod+4", "mod+5", "mod+6", "mod+7",
         ]) {
             if !(bare && matches!(tab, Tab::Changes | Tab::Stashes)) && pressed(shortcut) {
                 self.select_tab(tab);
@@ -504,9 +564,7 @@ impl Desk {
         }
         self.tab = tab;
         self.comparison.picker = None;
-        if tab == Tab::Terminal {
-            self.start_shell();
-        } else if tab == Tab::GitHub {
+        if tab == Tab::GitHub {
             if self.github_thread.is_some() {
                 self.refresh_github_thread();
             } else {
@@ -583,15 +641,7 @@ impl Desk {
 
     fn poll(&mut self) -> bool {
         let Some(update) = self.task.take() else {
-            if self.opening || self.tab != Tab::Terminal {
-                return false;
-            }
-            return self
-                .workspace
-                .selected
-                .as_ref()
-                .and_then(|path| self.shells.get_mut(path))
-                .is_some_and(Terminal::poll);
+            return false;
         };
         self.busy = false;
         match update {
@@ -684,15 +734,6 @@ impl Desk {
                     }
                 }
             }
-            Update::Terminal(result) => match result {
-                Ok(shell) => {
-                    if let Some(path) = &self.workspace.selected {
-                        self.shells.insert(path.clone(), shell);
-                    }
-                    self.workspace.notice.clear();
-                }
-                Err(e) => self.workspace.notice = e,
-            },
             Update::Repository {
                 path,
                 snapshot,
@@ -774,8 +815,7 @@ fn main() {
     rune::run(AppSpec {
         min_size: Some(MIN_WINDOW_SIZE),
         setup: Some(|s: &mut Desk, waker| {
-            s.task.set_waker(waker.clone());
-            s.waker = Some(waker);
+            s.task.set_waker(waker);
         }),
         poll: Some(|s: &mut Desk, _, _| s.poll()),
         on_key: Some(Desk::key),

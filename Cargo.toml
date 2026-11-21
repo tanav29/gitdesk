@@ -6,10 +6,8 @@ edition = "2024"
 [dependencies]
 rune = { git = "https://github.com/anomalyco/rune", rev = "9553c9a7d7d1e5e038d14e0b313513e95b4fb8bb", features = ["native-file-dialog"] }
 rune-kit = { git = "https://github.com/anomalyco/rune", rev = "9553c9a7d7d1e5e038d14e0b313513e95b4fb8bb" }
-portable-pty = "0.9"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-vt100 = "0.18"
 
 [patch.crates-io]
 winit = { git = "https://github.com/anomalyco/rune", rev = "9553c9a7d7d1e5e038d14e0b313513e95b4fb8bb" }

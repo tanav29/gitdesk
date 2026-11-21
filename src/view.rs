@@ -1,4 +1,4 @@
-use super::{BranchPrompt, Desk, DiffMode, Tab};
+use super::{BranchPrompt, Desk, DiffMode, ExternalTarget, Tab};
 use crate::git::{Action, Change, CommitOptions, ConfigEdit, Scope, Snapshot};
 use rune::{Color, Cx, El, FileDialogOptions, ScrollSpec, Shadow, TextStyle, col, el, row, text};
 use rune_kit::{
@@ -868,7 +868,6 @@ fn detail(s: &Desk, data: &Snapshot, k: &Kit, layers: &mut Vec<El>) -> El {
     match s.tab {
         Tab::Settings => settings(s, k),
         Tab::GitHub => github(s, k),
-        Tab::Terminal => crate::terminal_view::view(s, k),
         Tab::Stashes => stashes::view(s, data, k),
         Tab::Changes if !data.bare => changes(s, data, k, layers),
         Tab::Branches => {
@@ -1056,7 +1055,7 @@ fn branch_menu(s: &Desk, data: &Snapshot, branch: &str, k: &Kit, layers: &mut Ve
     menu.build(k, layers)
 }
 
-fn repository_header(s: &Desk, k: &Kit) -> El {
+fn repository_header(s: &Desk, k: &Kit, layers: &mut Vec<El>) -> El {
     let path = s.workspace.selected.as_deref();
     let title = path
         .and_then(std::path::Path::file_name)
@@ -1101,13 +1100,40 @@ fn repository_header(s: &Desk, k: &Kit) -> El {
         .help("Refresh")
         .help_keys(["F5"])
         .key("refresh");
+    let open_menu = Menu::new("open-external-menu")
+        .trigger(
+            Button::new("Open in")
+                .control_size(ControlSize::Regular)
+                .variant(ButtonVariant::Ghost)
+                .icon(k.glyph.chevron_down)
+                .disabled(s.busy || s.workspace.selected.is_none())
+                .on_press(|s: &mut Desk| s.open_menu = !s.open_menu)
+                .build(k)
+                .key("open-external"),
+        )
+        .open(s.open_menu)
+        .on_close(|s: &mut Desk| s.open_menu = false)
+        .placement(Placement::BottomEnd)
+        .item(
+            MenuItem::new("File manager")
+                .on_select(|s: &mut Desk| s.open_external(ExternalTarget::FileManager)),
+        )
+        .item(
+            MenuItem::new("Terminal")
+                .on_select(|s: &mut Desk| s.open_external(ExternalTarget::Terminal)),
+        )
+        .item(
+            MenuItem::new("Visual Studio Code")
+                .on_select(|s: &mut Desk| s.open_external(ExternalTarget::Editor)),
+        )
+        .build(k, layers);
     row()
         .center_y()
         .px(20.0)
         .py(6.0)
         .gap(8.0)
         .child(metadata)
-        .child(toolbar.child(refresh))
+        .child(toolbar.child(refresh).child(open_menu))
 }
 
 pub fn view(s: &Desk, _: &mut Cx<Desk>) -> El {
@@ -1126,8 +1152,6 @@ pub fn view(s: &Desk, _: &mut Cx<Desk>) -> El {
             main = main.child(settings(s, &k));
         } else if s.tab == Tab::GitHub {
             main = main.child(github(s, &k));
-        } else if s.tab == Tab::Terminal {
-            main = main.child(crate::terminal_view::view(s, &k));
         } else {
             main = main
                 .child(label(hint, 15.0, 400.0, MUTED))
@@ -1164,7 +1188,7 @@ pub fn view(s: &Desk, _: &mut Cx<Desk>) -> El {
                 .grow(1.0)
                 .min_w(0.0)
                 .h_full()
-                .child(repository_header(s, &k))
+                .child(repository_header(s, &k, &mut layers))
                 .child(divider())
                 .child(main),
         );
