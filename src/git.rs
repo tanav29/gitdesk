@@ -133,7 +133,7 @@ pub struct Snapshot {
     pub bare: bool,
     pub has_head: bool,
     pub changes: Vec<Change>,
-    pub history: Vec<HistoryRow>,
+    pub history: Vec<Commit>,
     pub branches: Vec<String>,
     pub stashes: Vec<Stash>,
 }
@@ -176,19 +176,15 @@ fn stashes(repo: &Path) -> Result<Vec<Stash>> {
 pub struct Commit {
     pub id: String,
     pub short_id: String,
+    pub parents: Vec<String>,
     pub refs: String,
     pub title: String,
 }
 
-pub struct HistoryRow {
-    pub graph: String,
-    pub commit: Option<Commit>,
-}
-
-fn history(repo: &Path, has_head: bool) -> Result<Vec<HistoryRow>> {
+fn history(repo: &Path, has_head: bool) -> Result<Vec<Commit>> {
     let mut args = vec![
         "log",
-        "--graph",
+        "--topo-order",
         "--no-color",
         "--no-show-signature",
         "--no-notes",
@@ -196,7 +192,7 @@ fn history(repo: &Path, has_head: bool) -> Result<Vec<HistoryRow>> {
         "--branches",
         "--remotes",
         "-40",
-        "--format=%x00%H%x00%h%x00%D%x00%s",
+        "--format=%H%x00%h%x00%P%x00%D%x00%s",
     ];
     if has_head {
         args.push("HEAD");
@@ -206,25 +202,21 @@ fn history(repo: &Path, has_head: bool) -> Result<Vec<HistoryRow>> {
         .lines()
         .map(|line| {
             let mut fields = line.splitn(5, '\0');
-            let graph = fields.next().unwrap_or_default().trim_end().to_owned();
-            let commit = match fields.next() {
-                Some(id) => {
-                    let mut field = || {
-                        fields
-                            .next()
-                            .map(str::to_owned)
-                            .ok_or_else(|| "Git returned an incomplete commit record.".to_owned())
-                    };
-                    Some(Commit {
-                        id: id.to_owned(),
-                        short_id: field()?,
-                        refs: field()?,
-                        title: field()?,
-                    })
-                }
-                None => None,
+            let mut field = || {
+                fields
+                    .next()
+                    .ok_or_else(|| "Git returned an incomplete commit record.".to_owned())
             };
-            Ok(HistoryRow { graph, commit })
+            Ok(Commit {
+                id: field()?.to_owned(),
+                short_id: field()?.to_owned(),
+                parents: field()?
+                    .split_ascii_whitespace()
+                    .map(str::to_owned)
+                    .collect(),
+                refs: field()?.to_owned(),
+                title: field()?.to_owned(),
+            })
         })
         .collect()
 }

@@ -298,10 +298,12 @@ fn history_graph_opens_root_and_merge_patches_in_the_diff_tab() {
     fs::write(repo.join("topic.txt"), "topic contents\n").unwrap();
     fixture_git(repo, &["add", "--", "topic.txt"]);
     fixture_git(repo, &["commit", "-m", "Topic commit"]);
+    let topic = fixture_git(repo, &["rev-parse", "HEAD"]);
     fixture_git(repo, &["switch", "main"]);
     fs::write(repo.join("main.txt"), "main contents\n").unwrap();
     fixture_git(repo, &["add", "--", "main.txt"]);
     fixture_git(repo, &["commit", "-m", "Main commit"]);
+    let main = fixture_git(repo, &["rev-parse", "HEAD"]);
     fixture_git(repo, &["merge", "--no-ff", "--no-edit", "topic"]);
     let merge = fixture_git(repo, &["rev-parse", "HEAD"]);
     fs::write(repo.join("base.txt"), "uncommitted contents\n").unwrap();
@@ -319,12 +321,13 @@ fn history_graph_opens_root_and_merge_patches_in_the_diff_tab() {
     settle(&mut rt);
     click(&mut rt, "tab-History");
     let history = &rt.state.workspace.snapshot.as_ref().unwrap().history;
-    assert!(
-        history
-            .iter()
-            .any(|row| row.commit.is_none() && row.graph.contains('\\'))
-    );
-    assert_eq!(history.iter().filter(|row| row.commit.is_some()).count(), 4);
+    assert_eq!(history.len(), 4);
+    assert_eq!(history[0].id, merge);
+    assert_eq!(history[0].parents, [main, topic]);
+    assert_eq!(history[1].parents, [root.as_str()]);
+    assert_eq!(history[2].parents, [root.as_str()]);
+    assert_eq!(history[3].id, root);
+    assert!(history[3].parents.is_empty());
 
     click(&mut rt, &format!("commit-{merge}"));
     assert!(rt.state.tab == Tab::Diff(DiffMode::Commit));

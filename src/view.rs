@@ -204,15 +204,15 @@ fn sidebar(s: &Desk, k: &Kit) -> El {
         .h_full()
         .padding(10.0)
         .gap(3.0)
-        .fill(color(RAIL))
-        .child(
-            row()
-                .h(40.0)
-                .px(10.0)
-                .center_y()
-                .child(label("GitDesk", 17.0, 700.0, INK)),
-        )
-        .child(divider())
+        // .fill(color(RAIL))
+        // .child(
+        //     row()
+        //         .h(40.0)
+        //         .px(10.0)
+        //         .center_y()
+        //         .child(label("GitDesk", 17.0, 700.0, INK)),
+        // )
+        // .child(divider())
         .child(el().h(4.0));
     for (index, (title, tab)) in s.tabs().into_iter().enumerate() {
         if bare && matches!(tab, Tab::Changes | Tab::Stashes) {
@@ -1061,13 +1061,13 @@ fn repository_header(s: &Desk, k: &Kit) -> El {
         .and_then(std::path::Path::file_name)
         .map_or_else(|| "Repository".into(), |name| name.to_string_lossy());
     let mut identity = row()
-        .gap(8.0)
+        .gap(6.0)
         .center_y()
-        .child(label(title, 19.0, 650.0, INK).min_w(0.0).truncate());
+        .child(label(title, 15.0, 650.0, INK).min_w(0.0).truncate());
     if let Some(data) = &s.workspace.snapshot {
         identity = identity.child(branch_badge(&data.branch));
     }
-    let mut metadata = col().gap(4.0).grow(1.0).min_w(0.0).child(identity);
+    let mut metadata = col().gap(1.0).grow(1.0).min_w(0.0).child(identity);
     if let Some(path) = path {
         metadata = metadata.child(
             label(path.display().to_string(), 12.0, 400.0, MUTED)
@@ -1075,15 +1075,24 @@ fn repository_header(s: &Desk, k: &Kit) -> El {
                 .selectable(true),
         );
     }
-    let mut toolbar = row().center_y().gap(6.0);
+    let header_command = |name: &str, action: Action| {
+        Button::new(name)
+            .control_size(ControlSize::Regular)
+            .variant(ButtonVariant::Ghost)
+            .disabled(s.busy)
+            .on_press(move |s: &mut Desk| s.act(action.clone()))
+            .build(k)
+    };
+    let mut toolbar = row().center_y().gap(2.0);
     if let Some(data) = &s.workspace.snapshot {
-        toolbar = toolbar.child(command(k, "Fetch", Action::Fetch, s.busy));
+        toolbar = toolbar.child(header_command("Fetch", Action::Fetch));
         if !data.bare {
-            toolbar = toolbar.child(command(k, "Pull", Action::Pull, s.busy));
+            toolbar = toolbar.child(header_command("Pull", Action::Pull));
         }
-        toolbar = toolbar.child(command(k, "Push", Action::Push, s.busy));
+        toolbar = toolbar.child(header_command("Push", Action::Push));
     }
-    let refresh = button("Refresh")
+    let refresh = Button::new("Refresh")
+        .control_size(ControlSize::Regular)
         .variant(ButtonVariant::Ghost)
         .disabled(s.busy)
         .on_press(Desk::refresh)
@@ -1094,8 +1103,8 @@ fn repository_header(s: &Desk, k: &Kit) -> El {
     row()
         .center_y()
         .px(20.0)
-        .py(13.0)
-        .gap(16.0)
+        .py(6.0)
+        .gap(8.0)
         .child(metadata)
         .child(toolbar.child(refresh))
 }
@@ -1107,25 +1116,7 @@ pub fn view(s: &Desk, _: &mut Cx<Desk>) -> El {
     }
     let w = &s.workspace;
     let mut layers = Vec::new();
-    let bare = w.snapshot.as_ref().is_some_and(|data| data.bare);
-    let title = match s.tab {
-        Tab::Changes if bare => "History",
-        Tab::Changes => "Changes",
-        Tab::Diff(_) => "Diff",
-        Tab::History => "History",
-        Tab::Branches => "Branches",
-        Tab::Stashes => "Stashes",
-        Tab::Settings => "Git settings",
-        Tab::GitHub => "GitHub",
-        Tab::Terminal => "Terminal",
-    };
-    let mut main = col()
-        .grow(1.0)
-        .min_h(0.0)
-        .px(20.0)
-        .py(16.0)
-        .gap(12.0)
-        .child(heading(title, 24.0));
+    let mut main = col().grow(1.0).min_h(0.0).px(20.0).py(16.0).gap(12.0);
     if let Some(data) = &w.snapshot {
         main = main.child(detail(s, data, &k, &mut layers));
     } else {
