@@ -151,6 +151,7 @@ pub struct Snapshot {
     pub changes: Vec<Change>,
     pub history: Vec<Commit>,
     pub branches: Vec<String>,
+    pub remote_branches: Vec<String>,
     pub remotes: Vec<String>,
     pub stashes: Vec<Stash>,
     pub tags: Vec<Tag>,
@@ -200,7 +201,7 @@ pub struct Commit {
     pub title: String,
 }
 
-fn history(repo: &Path, has_head: bool) -> Result<Vec<Commit>> {
+fn read_commits(repo: &Path, revisions: &[&str]) -> Result<Vec<Commit>> {
     let mut args = vec![
         "log",
         "--topo-order",
@@ -208,14 +209,9 @@ fn history(repo: &Path, has_head: bool) -> Result<Vec<Commit>> {
         "--no-show-signature",
         "--no-notes",
         "--decorate=short",
-        "--branches",
-        "--remotes",
-        "-40",
         "--format=%H%x00%h%x00%P%x00%D%x00%s",
     ];
-    if has_head {
-        args.push("HEAD");
-    }
+    args.extend_from_slice(revisions);
     args.push("--");
     output(repo, &args)?
         .lines()
@@ -238,6 +234,21 @@ fn history(repo: &Path, has_head: bool) -> Result<Vec<Commit>> {
             })
         })
         .collect()
+}
+
+fn history(repo: &Path, has_head: bool) -> Result<Vec<Commit>> {
+    let mut revisions = vec!["--branches", "--remotes", "-40"];
+    if has_head {
+        revisions.push("HEAD");
+    }
+    read_commits(repo, &revisions)
+}
+
+pub fn tagged_commit(repo: &Path, object: &str) -> Result<Commit> {
+    read_commits(repo, &["-1", &format!("{object}^{{commit}}")])?
+        .into_iter()
+        .next()
+        .ok_or_else(|| "This tag does not point to a commit.".into())
 }
 
 fn changes(repo: &Path) -> Result<Vec<Change>> {
@@ -269,6 +280,7 @@ fn changes(repo: &Path) -> Result<Vec<Change>> {
 pub fn snapshot(repo: &Path) -> Result<Snapshot> {
     let bare = output(repo, &["rev-parse", "--is-bare-repository"])? == "true";
     std::thread::scope(|scope| {
+        let remote_names = scope.spawn(|| output(repo, &["remote"]));
         let worktrees = scope.spawn(|| worktrees::list(repo));
         let tags = scope.spawn(|| tags::list(repo));
         let branches = scope.spawn(|| comparison_branches(repo));
@@ -305,7 +317,13 @@ pub fn snapshot(repo: &Path) -> Result<Snapshot> {
                 .iter()
                 .filter_map(|r| r.strip_prefix("heads/").map(str::to_owned))
                 .collect(),
-            remotes: refs
+            remotes: remote_names
+                .join()
+                .unwrap()?
+                .lines()
+                .map(str::to_owned)
+                .collect(),
+            remote_branches: refs
                 .iter()
                 .filter_map(|r| r.strip_prefix("remotes/").map(str::to_owned))
                 .collect(),
@@ -348,6 +366,7 @@ pub enum Action {
         message: String,
     },
     DeleteTag(Tag),
+    PushTag(Tag, String),
     History {
         checkout: Checkout,
         target: String,
@@ -385,6 +404,7 @@ impl Action {
             Self::Recover(_, recovery) => recovery.label(),
             Self::CreateTag { .. } => "Create tag",
             Self::DeleteTag(_) => "Delete tag",
+            Self::PushTag(..) => "Push tag",
             Self::AddWorktree { .. } => "Add worktree",
             Self::RemoveWorktree(_) => "Remove worktree",
             Self::LockWorktree(_, true) => "Lock worktree",
@@ -498,6 +518,7 @@ impl Action {
                 message,
             } => return tags::create(repo, name, target, message),
             Self::DeleteTag(tag) => return tags::delete(repo, tag),
+            Self::PushTag(tag, remote) => return tags::push(repo, tag, remote),
             Self::AddWorktree {
                 path,
                 mode,

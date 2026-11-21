@@ -1,7 +1,7 @@
 use super::*;
 use crate::git::WorktreeMode;
 
-pub(super) fn view(s: &Desk, data: &Snapshot, k: &Kit) -> El {
+pub(super) fn view(s: &Desk, data: &Snapshot, k: &Kit, layers: &mut Vec<El>) -> El {
     let form = &s.worktrees;
     let mut modes = row().gap(4.0);
     for (name, mode) in [
@@ -16,7 +16,10 @@ pub(super) fn view(s: &Desk, data: &Snapshot, k: &Kit) -> El {
                 } else {
                     ButtonVariant::Ghost
                 })
-                .on_press(move |s: &mut Desk| s.worktrees.mode = mode)
+                .on_press(move |s: &mut Desk| {
+                    s.worktrees.mode = mode;
+                    s.worktrees.picker = false;
+                })
                 .disabled(s.busy)
                 .build(k),
         );
@@ -35,12 +38,10 @@ pub(super) fn view(s: &Desk, data: &Snapshot, k: &Kit) -> El {
                 .key("worktree-path"),
         );
     let mut fields = row().gap(8.0);
-    if form.mode != WorktreeMode::Detached {
-        let title = if form.mode == WorktreeMode::NewBranch {
-            "New branch name"
-        } else {
-            "Existing local branch"
-        };
+    let mut branch_ready = true;
+    if form.mode == WorktreeMode::NewBranch {
+        branch_ready = !form.branch.text.trim().is_empty();
+        let title = "New branch name";
         fields = fields.child(
             TextInput::new(&form.branch)
                 .label(title)
@@ -50,6 +51,36 @@ pub(super) fn view(s: &Desk, data: &Snapshot, k: &Kit) -> El {
                 .build(k)
                 .grow(1.0)
                 .key("worktree-branch"),
+        );
+    } else if form.mode == WorktreeMode::Existing {
+        let branches: Vec<_> = data
+            .branches
+            .iter()
+            .filter(|b| !data.worktrees.iter().any(|t| t.branch.as_ref() == Some(*b)))
+            .cloned()
+            .collect();
+        let selected = form.existing.as_ref().filter(|b| branches.contains(b));
+        branch_ready = selected.is_some();
+        fields = fields.child(
+            Select::new("worktree-existing", &branches)
+                .current(selected.map(String::as_str))
+                .placeholder(if branches.is_empty() {
+                    "No available branches"
+                } else {
+                    "Choose local branch"
+                })
+                .label("Existing local branch")
+                .appearance(SelectAppearance::Field)
+                .width(208.0)
+                .disabled(s.busy || branches.is_empty())
+                .open(form.picker)
+                .on_toggle(|s: &mut Desk| s.worktrees.picker = true)
+                .on_close(|s: &mut Desk| s.worktrees.picker = false)
+                .on_choose(|s: &mut Desk, name, _| {
+                    s.worktrees.existing = Some(name.into());
+                    s.worktrees.picker = false;
+                })
+                .build(k, layers),
         );
     }
     if form.mode != WorktreeMode::Existing {
@@ -68,17 +99,16 @@ pub(super) fn view(s: &Desk, data: &Snapshot, k: &Kit) -> El {
         .child(
             fields.child(
                 button("Add worktree")
-                    .disabled(
-                        s.busy
-                            || form.path.text.trim().is_empty()
-                            || (form.mode != WorktreeMode::Detached
-                                && form.branch.text.trim().is_empty()),
-                    )
+                    .disabled(s.busy || form.path.text.trim().is_empty() || !branch_ready)
                     .on_press(|s: &mut Desk| {
                         s.act(Action::AddWorktree {
                             path: s.worktrees.path.text.trim().into(),
                             mode: s.worktrees.mode,
-                            branch: s.worktrees.branch.text.trim().into(),
+                            branch: if s.worktrees.mode == WorktreeMode::Existing {
+                                s.worktrees.existing.clone().unwrap_or_default()
+                            } else {
+                                s.worktrees.branch.text.trim().into()
+                            },
                             start: s.worktrees.start.text.trim().into(),
                         })
                     })
@@ -88,7 +118,7 @@ pub(super) fn view(s: &Desk, data: &Snapshot, k: &Kit) -> El {
         )
         .child(divider());
     if let Some(path) = &form.removing {
-        body = body.child(label(format!("Remove {} and its directory, including ignored files? Git will check for uncommitted changes.", path.display()), 14.0, 500.0, INK).wrap_anywhere())
+        return col().gap(8.0).child(heading("Remove worktree", 20.0)).child(label(format!("Remove {} and its directory, including ignored files? Git will check for uncommitted changes.", path.display()), 14.0, 500.0, INK).wrap_anywhere())
             .child(row().gap(8.0).child(command(k, "Remove worktree", Action::RemoveWorktree(path.clone()), s.busy))
             .child(button("Cancel").disabled(s.busy).on_press(|s: &mut Desk| s.worktrees.removing = None).build(k)));
     }

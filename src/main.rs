@@ -60,12 +60,18 @@ struct TagForm {
     target: TextEdit,
     message: TextEdit,
     deleting: Option<git::Tag>,
+    publishing: Option<git::Tag>,
+    menu: Option<String>,
+    remote: Option<String>,
+    remote_picker: bool,
 }
 
 #[derive(Default)]
 struct WorktreeForm {
     path: TextEdit,
     branch: TextEdit,
+    existing: Option<String>,
+    picker: bool,
     start: TextEdit,
     mode: git::WorktreeMode,
     removing: Option<PathBuf>,
@@ -127,6 +133,7 @@ enum Update {
         completed: Option<Action>,
     },
     IntegrationPreview(git::Result<git::Integration>),
+    TaggedCommit(git::Result<git::Commit>),
     Diff(git::Result<String>),
     ComparisonBranches(git::Result<Vec<String>>),
 }
@@ -560,6 +567,14 @@ impl Desk {
             self.branch_prompt = None;
             return true;
         }
+        if pressed("escape")
+            && (self.tags.deleting.take().is_some()
+                || self.tags.publishing.take().is_some()
+                || self.worktrees.removing.take().is_some())
+        {
+            self.tags.remote_picker = false;
+            return true;
+        }
         if pressed("mod+o") {
             self.show_opener();
             return true;
@@ -591,6 +606,12 @@ impl Desk {
         self.history_form = None;
         self.integration = None;
         self.recovery = None;
+        self.tags.deleting = None;
+        self.tags.publishing = None;
+        self.tags.remote_picker = false;
+        self.tags.menu = None;
+        self.worktrees.removing = None;
+        self.worktrees.picker = false;
         self.tab = tab;
         self.comparison.picker = None;
         if tab == Tab::GitHub {
@@ -792,11 +813,11 @@ impl Desk {
                 if matches!(completed, Some(Action::CreateBranch(..))) {
                     self.branch_name = TextEdit::new("");
                 }
-                if matches!(
-                    completed,
-                    Some(Action::CreateTag { .. } | Action::DeleteTag(..))
-                ) {
-                    self.tags = TagForm::default();
+                match &completed {
+                    Some(Action::CreateTag { .. }) => self.tags = TagForm::default(),
+                    Some(Action::DeleteTag(_)) => self.tags.deleting = None,
+                    Some(Action::PushTag(..)) => self.tags.publishing = None,
+                    _ => {}
                 }
                 if matches!(
                     completed,
@@ -850,6 +871,10 @@ impl Desk {
                     self.tab = Tab::Changes;
                 }
             }
+            Update::TaggedCommit(result) => match result {
+                Ok(commit) => self.select_commit(commit),
+                Err(error) => self.workspace.notice = error,
+            },
             Update::IntegrationPreview(result) => match result {
                 Ok(plan) => {
                     self.integration = Some(plan);

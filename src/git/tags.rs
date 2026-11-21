@@ -64,3 +64,24 @@ pub(super) fn delete(repo: &Path, tag: &Tag) -> Result<()> {
     )
     .map(drop)
 }
+
+pub(super) fn push(repo: &Path, tag: &Tag, remote: &str) -> Result<()> {
+    let reference = format!("refs/tags/{}", tag.name);
+    if output(repo, &["show-ref", "--verify", "--hash", &reference])? != tag.object {
+        return Err("The tag moved. Refresh and select it again.".into());
+    }
+    if !output(repo, &["remote"])?.lines().any(|r| r == remote) {
+        return Err("Choose a configured remote.".into());
+    }
+    output(
+        repo,
+        &[
+            "push",
+            "--no-follow-tags",
+            "--",
+            remote,
+            &format!("{}:{reference}", tag.object),
+        ],
+    )
+    .map(drop)
+}

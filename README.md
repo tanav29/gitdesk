@@ -30,6 +30,7 @@ Use Ctrl on Windows and Linux, or Command on macOS.
 | Ctrl/Command + O | Open a repository |
 | Esc | Cancel the repository picker when a repository is open |
 | Ctrl/Command + 1 through 7 | Changes, Diff, History, Branches, Stashes, Settings, GitHub |
+| Ctrl/Command + 8 or 9 | Tags or Worktrees |
 | F5 | Refresh the current view |
 
 ## Working with a repository
@@ -40,7 +41,29 @@ The **More** menu beside the commit button lets you add a signed-off-by trailer,
 
 In **Stashes**, save staged and unstaged changes with an optional message. Check **Include untracked files** to save new files too. **Apply** restores the changes and keeps the stash. **Pop** removes the stash after a successful restore. **Restore staged state** is on by default.
 
-**Diff** shows tracked changes in the working tree or index. **History** graphs up to 40 commits reachable from local branches, remote-tracking branches, and the current HEAD. Select a commit to open its patch in **Diff**. Merge commits are compared with their first parent. In **Branches**, use a branch's **Actions** menu to switch, create another branch from it, rename it, delete it, merge it into the current branch, or rebase the current branch onto it. Deletion requires confirmation and Git refuses to delete unmerged branches. Git reports conflicts in the window; use an external terminal to resolve them and continue or abort the operation.
+**Diff** shows tracked changes in the working tree or index. **History** graphs up to 40 commits reachable from local branches, remote-tracking branches, and the current HEAD. Select a commit to open its patch in **Diff**. Merge commits are compared with their first parent.
+
+### Commit actions
+
+Choose **Actions** beside the selected commit’s title to tag it or change the current checkout.
+
+- **Revert commit** creates a new commit that reverses the selected change. For a merge, choose the mainline parent whose side of the merge you want to keep.
+- **Reset to commit** moves HEAD to the selected commit. **Soft** preserves the index and working files. **Mixed** resets the index and preserves working files. **Hard** also replaces tracked files and can remove untracked files that obstruct checkout.
+- **Squash commits** combines the selected commit and every commit through HEAD into one commit with your message. Choose the oldest commit in a linear range of at least two commits. GitDesk reuses the tree at HEAD, preserving staged and unstaged edits. The original tip is available in the reflog.
+
+### Branches and conflicts
+
+In **Branches**, use a local branch’s **Actions** menu to switch, branch from it, rename it, or delete it. Git checks for unmerged changes before deletion. Choose a local or remote-tracking branch to preview a **Merge** or **Rebase**. The preview shows the direction and how many commits are unique to each side. For a merge, choose Git’s configured behavior, fast-forward only, or a merge commit. For a rebase, choose linear replay or preserve merges.
+
+When an operation stops, **Changes** shows the conflicted paths. Edit the files in your editor, stage each resolution, and choose **Continue**. **Skip commit** is available during rebase and revert. **Abort** asks for confirmation before abandoning the operation. Reopening a worktree restores its in-progress controls.
+
+### Tags and worktrees
+
+In **Tags**, enter a name and an optional target branch, tag, or commit. The target defaults to HEAD. Add an annotation to create an annotated tag, or leave it blank for a lightweight tag. A tag’s **Actions** menu opens its target commit, pushes that single tag to a configured remote, or deletes it locally.
+
+In **Worktrees**, enter a destination folder and choose a new branch, an available local branch, or a detached checkout. New branches and detached worktrees accept a starting revision. Relative paths start at the open repository. The list shows each checkout’s branch or detached HEAD, folder, and lock status. **Open** switches GitDesk to that worktree. **Lock** protects a linked worktree from removal and pruning. **Remove** requires confirmation and Git checks the worktree for changes.
+
+### Repository tools
 
 In **Diff → Compare branches**, choose a base and a comparison branch to view the changes from the base tip to the comparison tip. The pickers include local and remote-tracking branches. Use **Fetch** to update remote-tracking branches.
 

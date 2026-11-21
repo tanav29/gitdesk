@@ -114,18 +114,14 @@ impl HistoryAction {
                 output(repo, &["merge-base", "--is-ancestor", &id, head])
                     .map_err(|_| "Choose a commit on the current branch's history.")?;
                 let range = format!("{id}..{head}");
-                let parents = output(
-                    repo,
-                    &[
-                        "show",
-                        "-s",
-                        "--format=%P",
-                        "--no-notes",
-                        "--no-show-signature",
-                        &id,
-                    ],
-                )?;
-                if parents.contains(' ')
+                // Read stored parents even at a shallow boundary, where log shows a synthetic root.
+                let raw = output(repo, &["cat-file", "-p", &id])?;
+                let mut parents = raw
+                    .lines()
+                    .take_while(|line| !line.is_empty())
+                    .filter_map(|line| line.strip_prefix("parent "));
+                let first_parent = parents.next();
+                if parents.next().is_some()
                     || !output(repo, &["rev-list", "--max-count=1", "--merges", &range])?.is_empty()
                 {
                     return Err("Choose a linear range without merge commits.".into());
@@ -133,8 +129,8 @@ impl HistoryAction {
                 // Reuse HEAD's tree. The user's working tree and index never enter the new commit.
                 let tree = format!("{head}^{{tree}}");
                 let mut args = vec!["commit-tree", &tree];
-                if !parents.is_empty() {
-                    args.extend(["-p", &parents]);
+                if let Some(parent) = first_parent {
+                    args.extend(["-p", parent]);
                 }
                 args.extend(["-m", message]);
                 let replacement = output(repo, &args)?;
@@ -145,7 +141,7 @@ impl HistoryAction {
                         "update-ref",
                         "-m",
                         "squash: combine commits",
-                        "HEAD",
+                        checkout.reference.as_deref().unwrap_or("HEAD"),
                         &replacement,
                         head,
                     ],

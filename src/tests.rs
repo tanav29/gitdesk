@@ -912,3 +912,103 @@ fn branch_preview_and_conflict_recovery_through_the_ui() {
         fixture_git(repo, &["rev-parse", "topic"])
     );
 }
+
+#[test]
+fn publishes_only_the_reviewed_tag_and_opens_its_history_actions() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("local");
+    let remote = tmp.path().join("remote.git");
+    init(&repo);
+    fixture_git(tmp.path(), &["init", "--bare", remote.to_str().unwrap()]);
+    fixture_git(
+        &repo,
+        &["remote", "add", "origin", remote.to_str().unwrap()],
+    );
+    fixture_git(&repo, &["commit", "--allow-empty", "-m", "release"]);
+    fixture_git(&repo, &["tag", "-a", "other", "-m", "another release"]);
+    fixture_git(&repo, &["config", "push.followTags", "true"]);
+    let mut rt = Runtime::new(
+        Desk::new(Some(repo.clone())),
+        view::view,
+        MIN_WINDOW_SIZE,
+        Env {
+            system_dark: false,
+            scale: 1.0,
+        },
+    );
+    rt.poll = Some(|s, _, _| s.poll());
+    settle(&mut rt);
+    click(&mut rt, "tab-Tags");
+    click(&mut rt, "tag-name");
+    rt.paste("release");
+    click(&mut rt, "tag-message");
+    rt.paste("Ready");
+    click(&mut rt, "create-tag");
+    click(&mut rt, "tag-actions-release");
+    click(&mut rt, "tag-menu-release-item1");
+    click(&mut rt, "confirm-push-tag");
+    assert_eq!(fixture_git(&remote, &["tag", "--list"]), "release");
+    assert_eq!(fixture_git(&remote, &["cat-file", "-t", "release"]), "tag");
+    click(&mut rt, "tag-actions-release");
+    click(&mut rt, "tag-menu-release-item0");
+    assert!(rt.state.tab == Tab::Diff(DiffMode::Commit));
+    click(&mut rt, "commit-actions");
+    click(&mut rt, "history-actions-item2");
+    assert!(rt.state.history_form.is_some());
+    click(&mut rt, "confirm-history-action");
+    assert!(rt.state.history_form.is_none());
+}
+
+#[test]
+fn linked_checkout_rebase_continues_independently_and_rejects_a_moved_source() {
+    use git::{Integration, IntegrationMode, Operation, Recovery, WorktreeMode};
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("main");
+    let linked = tmp.path().join("linked");
+    init(&repo);
+    fs::write(repo.join("f"), "base").unwrap();
+    fixture_git(&repo, &["add", "f"]);
+    fixture_git(&repo, &["commit", "-m", "base"]);
+    Action::AddWorktree {
+        path: linked.clone(),
+        mode: WorktreeMode::NewBranch,
+        branch: "topic".into(),
+        start: "".into(),
+    }
+    .apply(&repo)
+    .unwrap();
+    fs::write(linked.join("f"), "topic").unwrap();
+    fixture_git(&linked, &["commit", "-am", "topic"]);
+    let preview = || {
+        Integration::preview(&linked, "refs/heads/main".into(), IntegrationMode::Rebase).unwrap()
+    };
+    let old = preview();
+    fs::write(repo.join("f"), "main").unwrap();
+    fixture_git(&repo, &["commit", "-am", "main"]);
+    assert!(
+        Action::Integrate(old)
+            .apply(&linked)
+            .unwrap_err()
+            .contains("source branch moved")
+    );
+    assert!(Action::Integrate(preview()).apply(&linked).is_err());
+    assert_eq!(git::snapshot(&repo).unwrap().operation, None);
+    assert_eq!(
+        git::snapshot(&linked).unwrap().operation,
+        Some(Operation::Rebase)
+    );
+    fs::write(linked.join("f"), "resolved").unwrap();
+    Action::Stage(vec!["f".into()]).apply(&linked).unwrap();
+    Action::Recover(Operation::Rebase, Recovery::Continue)
+        .apply(&linked)
+        .unwrap();
+    assert_eq!(
+        fixture_git(&linked, &["symbolic-ref", "--short", "HEAD"]),
+        "topic"
+    );
+    assert_eq!(
+        fixture_git(&linked, &["rev-parse", "HEAD^"]),
+        fixture_git(&repo, &["rev-parse", "HEAD"])
+    );
+    assert_eq!(fs::read_to_string(repo.join("f")).unwrap(), "main");
+}

@@ -881,8 +881,8 @@ fn detail(s: &Desk, data: &Snapshot, k: &Kit, layers: &mut Vec<El>) -> El {
     }
     let mut body = col().gap(4.0);
     match s.tab {
-        Tab::Worktrees => worktrees::view(s, data, k),
-        Tab::Tags => tags::view(s, data, k),
+        Tab::Worktrees => worktrees::view(s, data, k, layers),
+        Tab::Tags => tags::view(s, data, k, layers),
         Tab::Settings => settings(s, k),
         Tab::GitHub => github(s, k),
         Tab::Stashes => stashes::view(s, data, k),
@@ -987,9 +987,9 @@ fn detail(s: &Desk, data: &Snapshot, k: &Kit, layers: &mut Vec<El>) -> El {
                     MUTED,
                 ));
             }
-            if !data.remotes.is_empty() {
+            if !data.remote_branches.is_empty() {
                 body = body.child(heading("Remote-tracking branches", 16.0));
-                for branch in &data.remotes {
+                for branch in &data.remote_branches {
                     let mut line = row().h(42.0).gap(8.0).center_y().child(
                         label(branch, 14.0, 500.0, INK)
                             .grow(1.0)
@@ -1071,9 +1071,9 @@ fn branch_menu(
         }
         if data.has_head {
             for (title, mode) in [
-                ("Merge into current?", crate::git::IntegrationMode::Merge),
+                ("Merge into current…", crate::git::IntegrationMode::Merge),
                 (
-                    "Rebase current onto this?",
+                    "Rebase current onto this…",
                     crate::git::IntegrationMode::Rebase,
                 ),
             ] {
