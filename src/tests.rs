@@ -694,3 +694,67 @@ fn tags_create_at_an_explicit_commit_and_protect_replaced_tags() {
     Action::DeleteTag(release.clone()).apply(repo).unwrap();
     assert_eq!(fixture_git(repo, &["tag", "--list"]), "latest");
 }
+
+#[test]
+fn linked_worktrees_can_be_created_opened_locked_and_safely_removed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("main");
+    init(&repo);
+    fixture_git(&repo, &["commit", "--allow-empty", "-m", "base"]);
+    let path = tmp.path().join("new tree");
+    Action::AddWorktree {
+        path: path.clone(),
+        mode: git::WorktreeMode::NewBranch,
+        branch: "topic".into(),
+        start: "HEAD".into(),
+    }
+    .apply(&repo)
+    .unwrap();
+    let trees = git::snapshot(&path).unwrap().worktrees;
+    let tree = trees.iter().find(|t| t.current).unwrap();
+    assert!(!tree.main);
+    assert_eq!(tree.branch.as_deref(), Some("topic"));
+    assert!(
+        Action::RemoveWorktree(tree.path.clone())
+            .apply(&path)
+            .is_err()
+    );
+    Action::LockWorktree(tree.path.clone(), true)
+        .apply(&repo)
+        .unwrap();
+    assert!(
+        Action::RemoveWorktree(tree.path.clone())
+            .apply(&repo)
+            .is_err()
+    );
+    Action::LockWorktree(tree.path.clone(), false)
+        .apply(&repo)
+        .unwrap();
+    fs::write(path.join("draft"), "keep").unwrap();
+    assert!(
+        Action::RemoveWorktree(tree.path.clone())
+            .apply(&repo)
+            .is_err()
+    );
+    fs::remove_file(path.join("draft")).unwrap();
+    Action::RemoveWorktree(tree.path.clone())
+        .apply(&repo)
+        .unwrap();
+    assert!(!path.exists());
+    for mode in [git::WorktreeMode::Existing, git::WorktreeMode::Detached] {
+        Action::AddWorktree {
+            path: path.clone(),
+            mode,
+            branch: "topic".into(),
+            start: "".into(),
+        }
+        .apply(&repo)
+        .unwrap();
+        let trees = git::snapshot(&path).unwrap().worktrees;
+        let tree = trees.iter().find(|t| t.current).unwrap();
+        assert_eq!(tree.branch.is_none(), mode == git::WorktreeMode::Detached);
+        Action::RemoveWorktree(tree.path.clone())
+            .apply(&repo)
+            .unwrap();
+    }
+}

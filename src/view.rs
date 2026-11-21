@@ -11,6 +11,7 @@ mod github_thread;
 mod history;
 mod stashes;
 mod tags;
+mod worktrees;
 
 const PAGE: &str = "#ffffff";
 const RAIL: &str = "#f6f8fb";
@@ -867,6 +868,7 @@ fn diff_controls(s: &Desk, bare: bool, mode: DiffMode, k: &Kit, layers: &mut Vec
 fn detail(s: &Desk, data: &Snapshot, k: &Kit, layers: &mut Vec<El>) -> El {
     let mut body = col().gap(4.0);
     match s.tab {
+        Tab::Worktrees => worktrees::view(s, data, k),
         Tab::Tags => tags::view(s, data, k),
         Tab::Settings => settings(s, k),
         Tab::GitHub => github(s, k),

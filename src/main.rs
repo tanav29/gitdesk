@@ -36,6 +36,7 @@ enum Tab {
     Settings,
     GitHub,
     Tags,
+    Worktrees,
 }
 
 #[derive(Default)]
@@ -59,6 +60,15 @@ struct TagForm {
     target: TextEdit,
     message: TextEdit,
     deleting: Option<git::Tag>,
+}
+
+#[derive(Default)]
+struct WorktreeForm {
+    path: TextEdit,
+    branch: TextEdit,
+    start: TextEdit,
+    mode: git::WorktreeMode,
+    removing: Option<PathBuf>,
 }
 
 struct StashForm {
@@ -217,6 +227,7 @@ struct Desk {
     branch_prompt_name: TextEdit,
     config: ConfigForm,
     tags: TagForm,
+    worktrees: WorktreeForm,
     stash: StashForm,
     github_section: github::Section,
     github_entries: Vec<github::Entry>,
@@ -238,6 +249,7 @@ impl Desk {
             branch_prompt_name: TextEdit::new(""),
             config: ConfigForm::default(),
             tags: TagForm::default(),
+            worktrees: WorktreeForm::default(),
             stash: StashForm::default(),
             github_section: github::Section::default(),
             github_entries: Vec::new(),
@@ -483,7 +495,7 @@ impl Desk {
         }
     }
 
-    fn tabs(&self) -> [(&'static str, Tab); 8] {
+    fn tabs(&self) -> [(&'static str, Tab); 9] {
         let diff = if self.selected_commit.is_some() {
             DiffMode::Commit
         } else if self
@@ -505,6 +517,7 @@ impl Desk {
             ("Settings", Tab::Settings),
             ("GitHub", Tab::GitHub),
             ("Tags", Tab::Tags),
+            ("Worktrees", Tab::Worktrees),
         ]
     }
 
@@ -543,7 +556,7 @@ impl Desk {
             .as_ref()
             .is_some_and(|data| data.bare);
         for ((_, tab), shortcut) in self.tabs().into_iter().zip([
-            "mod+1", "mod+2", "mod+3", "mod+4", "mod+5", "mod+6", "mod+7", "mod+8",
+            "mod+1", "mod+2", "mod+3", "mod+4", "mod+5", "mod+6", "mod+7", "mod+8", "mod+9",
         ]) {
             if !(bare && matches!(tab, Tab::Changes | Tab::Stashes)) && pressed(shortcut) {
                 self.select_tab(tab);
@@ -653,6 +666,7 @@ impl Desk {
                     self.commit_options = CommitOptions::default();
                     self.config = ConfigForm::default();
                     self.tags = TagForm::default();
+                    self.worktrees = WorktreeForm::default();
                     self.stash = StashForm::default();
                     self.branch_name = TextEdit::new("");
                     self.branch_menu = None;
@@ -744,6 +758,12 @@ impl Desk {
                 }
                 if matches!(completed, Some(Action::Stash(..))) {
                     self.stash.message = TextEdit::new("");
+                }
+                if matches!(completed, Some(Action::AddWorktree { .. })) {
+                    self.worktrees = WorktreeForm::default();
+                }
+                if matches!(completed, Some(Action::RemoveWorktree(_))) {
+                    self.worktrees.removing = None;
                 }
                 if matches!(completed, Some(Action::CreateBranch(..))) {
                     self.branch_name = TextEdit::new("");

@@ -4,7 +4,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 mod tags;
+mod worktrees;
 pub use tags::Tag;
+pub use worktrees::{Worktree, WorktreeMode};
 
 pub type Result<T> = std::result::Result<T, String>;
 
@@ -143,6 +145,7 @@ pub struct Snapshot {
     pub branches: Vec<String>,
     pub stashes: Vec<Stash>,
     pub tags: Vec<Tag>,
+    pub worktrees: Vec<Worktree>,
 }
 
 #[derive(Clone)]
@@ -271,6 +274,7 @@ fn local_branches(repo: &Path) -> Result<Vec<String>> {
 pub fn snapshot(repo: &Path) -> Result<Snapshot> {
     let bare = output(repo, &["rev-parse", "--is-bare-repository"])? == "true";
     std::thread::scope(|scope| {
+        let worktrees = scope.spawn(|| worktrees::list(repo));
         let tags = scope.spawn(|| tags::list(repo));
         let branches = scope.spawn(|| local_branches(repo));
         let changes = (!bare).then(|| scope.spawn(|| changes(repo)));
@@ -290,6 +294,7 @@ pub fn snapshot(repo: &Path) -> Result<Snapshot> {
             history: history?,
             branches: branches.join().unwrap()?,
             tags: tags.join().unwrap()?,
+            worktrees: worktrees.join().unwrap()?,
             stashes: stashes.map_or_else(|| Ok(Vec::new()), |job| job.join().unwrap())?,
         })
     })
@@ -327,6 +332,14 @@ pub enum Action {
         message: String,
     },
     DeleteTag(Tag),
+    AddWorktree {
+        path: PathBuf,
+        mode: WorktreeMode,
+        branch: String,
+        start: String,
+    },
+    RemoveWorktree(PathBuf),
+    LockWorktree(PathBuf, bool),
     Fetch,
     Pull,
     Push,
@@ -351,6 +364,10 @@ impl Action {
             Self::Rebase(_) => "Rebase branch",
             Self::CreateTag { .. } => "Create tag",
             Self::DeleteTag(_) => "Delete tag",
+            Self::AddWorktree { .. } => "Add worktree",
+            Self::RemoveWorktree(_) => "Remove worktree",
+            Self::LockWorktree(_, true) => "Lock worktree",
+            Self::LockWorktree(_, false) => "Unlock worktree",
             Self::Fetch => "Fetch",
             Self::Pull => "Pull",
             Self::Push => "Push",
@@ -468,6 +485,16 @@ impl Action {
                 message,
             } => return tags::create(repo, name, target, message),
             Self::DeleteTag(tag) => return tags::delete(repo, tag),
+            Self::AddWorktree {
+                path,
+                mode,
+                branch,
+                start,
+            } => return worktrees::add(repo, path, *mode, branch, start),
+            Self::RemoveWorktree(path) => return worktrees::manage(repo, "remove", path),
+            Self::LockWorktree(path, locked) => {
+                return worktrees::manage(repo, if *locked { "lock" } else { "unlock" }, path);
+            }
             Self::Fetch => return output(repo, &["fetch"]).map(|_| ()),
             Self::Pull => return output(repo, &["pull", "--ff-only"]).map(|_| ()),
             Self::Push => return output(repo, &["push"]).map(|_| ()),
