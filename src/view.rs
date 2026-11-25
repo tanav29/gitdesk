@@ -16,14 +16,14 @@ mod stashes;
 mod tags;
 mod worktrees;
 
-const PAGE: &str = "#ffffff";
-const RAIL: &str = "#f6f8fb";
-const HOVER: &str = "#edf2f8";
-const SELECTED: &str = "#e8effd";
+const PAGE: &str = "#f8fbff";
+const RAIL: &str = "#e8f1fa";
+const HOVER: &str = "#dceaf6";
+const SELECTED: &str = "#d5e8fa";
 pub(crate) const INK: &str = "#1b293b";
 pub(crate) const MUTED: &str = "#526278";
 pub(crate) const ACCENT: &str = "#2451b8";
-pub(crate) const RULE: &str = "#dce4ee";
+pub(crate) const RULE: &str = "#cbdbe9";
 const ADDED: &str = "#21623e";
 const REMOVED: &str = "#a3323a";
 
@@ -37,7 +37,7 @@ fn light_kit() -> Kit {
         PaletteFocus::Accent,
     );
     let c = &mut kit.c;
-    c.bg_button_neutral = color(PAGE);
+    c.bg_button_neutral = color("#e8f3fc");
     c.bg_contrast = color(ACCENT);
     c.text_faint = color(MUTED);
     c.border_muted = color(RULE);
@@ -45,11 +45,42 @@ fn light_kit() -> Kit {
     c.std_border = color(ACCENT);
     c.std_icon = color(ACCENT);
     c.surface_weak = color(SELECTED);
+    kit.radius.md = 10.0;
+    kit.radius.lg = 14.0;
+    kit.radius.xl = 18.0;
+    kit.elevation.button_neutral = vec![
+        Shadow {
+            spread: 1.0,
+            inset: true,
+            color: color("#ffffff").alpha(0.9),
+            ..Shadow::default()
+        },
+        Shadow {
+            blur: 5.0,
+            y: 2.0,
+            color: color("#7395b3").alpha(0.25),
+            ..Shadow::default()
+        },
+    ];
+    kit.elevation.button_contrast = vec![
+        Shadow {
+            spread: 1.0,
+            inset: true,
+            color: color("#d8edff").alpha(0.55),
+            ..Shadow::default()
+        },
+        Shadow {
+            blur: 6.0,
+            y: 2.0,
+            color: color("#4b75a4").alpha(0.3),
+            ..Shadow::default()
+        },
+    ];
     kit.ring = None;
     kit.elevation = kit.elevation.with_input(vec![Shadow {
         spread: 1.0,
         inset: true,
-        color: color("#a2afbf"),
+        color: color("#ffffff"),
         ..Shadow::default()
     }]);
     kit
@@ -95,7 +126,7 @@ fn scroll_list(body: El) -> El {
 }
 fn command(k: &Kit, name: &str, action: Action, disabled: bool) -> El {
     button(name)
-        .variant(ButtonVariant::Outline)
+        .variant(ButtonVariant::Neutral)
         .disabled(disabled)
         .on_press(move |s: &mut Desk| s.act(action.clone()))
         .build(k)
@@ -103,7 +134,7 @@ fn command(k: &Kit, name: &str, action: Action, disabled: bool) -> El {
 
 fn opener(s: &Desk, k: &Kit) -> El {
     let browse = button("Browse…")
-        .variant(ButtonVariant::Outline)
+        .variant(ButtonVariant::Neutral)
         .disabled(s.busy)
         .on_press_tx(|s: &mut Desk, tx| {
             tx.open_folder(
@@ -148,9 +179,11 @@ fn opener(s: &Desk, k: &Kit) -> El {
         .w(510.0)
         .padding(24.0)
         .gap(16.0)
-        .radius(10.0)
-        .border(1.0, color(RULE))
-        .fill(color(PAGE))
+        .radius(20.0)
+        .border(1.0, color("#ffffff"))
+        .backdrop_blur(16.0)
+        .fill(color(PAGE).alpha(0.86))
+        .shadow(14.0, 32.0, color("#486b8b").alpha(0.18))
         .child(
             col()
                 .gap(5.0)
@@ -194,7 +227,7 @@ fn opener(s: &Desk, k: &Kit) -> El {
         .w_full()
         .h_full()
         .center()
-        .fill(color(RAIL))
+        .gradient(color("#dbeaf7"), color("#b9d5e8"))
         .child(panel.child(actions))
 }
 
@@ -210,15 +243,17 @@ fn sidebar(s: &Desk, k: &Kit) -> El {
         .h_full()
         .padding(10.0)
         .gap(3.0)
-        // .fill(color(RAIL))
-        // .child(
-        //     row()
-        //         .h(40.0)
-        //         .px(10.0)
-        //         .center_y()
-        //         .child(label("GitDesk", 17.0, 700.0, INK)),
-        // )
-        // .child(divider())
+        .radius(18.0)
+        .border(1.0, color("#ffffff").alpha(0.8))
+        .backdrop_blur(14.0)
+        .fill(color("#f5faff").alpha(0.72))
+        .child(
+            row()
+                .h(40.0)
+                .px(10.0)
+                .center_y()
+                .child(label("GitDesk", 17.0, 700.0, INK)),
+        )
         .child(el().h(4.0));
     for (index, (title, tab)) in s.tabs().into_iter().enumerate() {
         if bare && matches!(tab, Tab::Changes | Tab::Stashes) {
@@ -713,7 +748,7 @@ fn changes(s: &Desk, data: &Snapshot, k: &Kit, layers: &mut Vec<El>) -> El {
 fn commit_menu(s: &Desk, data: &Snapshot, k: &Kit, layers: &mut Vec<El>) -> El {
     let options = s.commit_options;
     let trigger = button("More")
-        .variant(ButtonVariant::Outline)
+        .variant(ButtonVariant::Neutral)
         .icon(k.glyph.chevron_down)
         .help("Commit options")
         .disabled(s.busy)
@@ -1042,7 +1077,7 @@ fn branch_menu(
     let menu_name = source.clone();
     let current = !remote && branch == data.branch;
     let trigger = button("Actions")
-        .variant(ButtonVariant::Outline)
+        .variant(ButtonVariant::Neutral)
         .icon(k.glyph.chevron_down)
         .help(format!("Actions for {branch}"))
         .disabled(s.busy)
@@ -1242,14 +1277,18 @@ pub fn view(s: &Desk, _: &mut Cx<Desk>) -> El {
     let body = row()
         .w_full()
         .h_full()
-        .fill(color(PAGE))
+        .padding(10.0)
+        .gap(10.0)
+        .gradient(color("#d9eaf7"), color("#bed7e9"))
         .child(sidebar(s, &k))
-        .child(el().w(1.0).h_full().fill(color(RULE)))
         .child(
             col()
                 .grow(1.0)
                 .min_w(0.0)
                 .h_full()
+                .radius(18.0)
+                .border(1.0, color("#ffffff").alpha(0.9))
+                .fill(color(PAGE))
                 .child(repository_header(s, &k, &mut layers))
                 .child(divider())
                 .child(main),

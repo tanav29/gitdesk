@@ -101,7 +101,7 @@ pub(super) fn form(s: &Desk, data: &Snapshot, form: &HistoryForm, k: &Kit) -> El
                             .variant(if *mainline == Some(n) {
                                 ButtonVariant::Contrast
                             } else {
-                                ButtonVariant::Outline
+                                ButtonVariant::Neutral
                             })
                             .disabled(s.busy)
                             .on_press(move |s: &mut Desk| {
@@ -126,7 +126,7 @@ pub(super) fn form(s: &Desk, data: &Snapshot, form: &HistoryForm, k: &Kit) -> El
                         .variant(if *selected == mode {
                             ButtonVariant::Contrast
                         } else {
-                            ButtonVariant::Outline
+                            ButtonVariant::Neutral
                         })
                         .disabled(s.busy)
                         .on_press(move |s: &mut Desk| {

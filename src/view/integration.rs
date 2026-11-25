@@ -58,7 +58,7 @@ pub(super) fn preview(s: &Desk, data: &Snapshot, plan: &Integration, k: &Kit) ->
                 .variant(if plan.mode == mode {
                     ButtonVariant::Contrast
                 } else {
-                    ButtonVariant::Outline
+                    ButtonVariant::Neutral
                 })
                 .disabled(s.busy)
                 .on_press(move |s: &mut Desk| {
